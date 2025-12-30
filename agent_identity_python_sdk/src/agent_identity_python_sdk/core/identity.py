@@ -75,14 +75,17 @@ class IdentityClient:
         Create a workload identity with the specified parameters.
 
         Args:
-            workload_identity_name (Optional[str]): The name of the workload identity. If not specified,
+            workload_identity_name: The name of the workload identity. If not specified,
                 a random workload name will be assigned in the format 'workload-{uuid}'.
-            role_arn (Optional[str]): The ARN of the agent role to be associated with this
+
+            role_arn: The ARN of the agent role to be associated with this
                 workload identity.
-            allowed_resource_oauth2_return_urls (Optional[list[str]]): A list of allowed
+
+            allowed_resource_oauth2_return_urls: A list of allowed
                 return URLs for OAuth2 flows. Only return URLs in this list will be
                 permitted when obtaining OAuth2 access tokens.
-            identity_provider_name (Optional[str]): The name of the identity provider
+
+            identity_provider_name: The name of the identity provider
                 associated with this workload identity. If configured, this workload identity
                 will only accept user tokens issued by this provider.
 
@@ -151,11 +154,11 @@ class IdentityClient:
 
         Args:
             session_uri: The session identifier returned from the GetResourceOAuth2Token call.
+
             user_id: End-user ID. Required if workload access token was obtained using user ID.
+
             user_token: End-user token (JWT). Required if workload access token was obtained using JWT.
         """
-
-        self.logger.info("Confirming authorization to complete OAuth2 3LO flow for access token.")
 
         identifier = CompleteResourceTokenAuthRequestUserIdentifier(user_id=user_id, user_jwt=user_token)
         request = CompleteResourceTokenAuthRequest(user_identifier=identifier, session_uri=session_uri)
@@ -184,18 +187,29 @@ class IdentityClient:
 
         Args:
             credential_provider_name: The credential provider name
-            scopes: Optional list of OAuth2 scopes to request
-            workload_identity_token: Agent identity access token for authentication
-            on_auth_url: Callback for handling authorization URLs
+
+            scopes: OAuth2 scopes list
+
+            workload_identity_token: Workload identity access token
+
+            on_auth_url: Callback function for handling authorization URLs when they are obtained
+
             auth_flow: Authentication flow type ("USER_FEDERATION")
-            callback_url: OAuth2 callback URL (must be pre-registered)
-            force_authentication: Force re-authentication even if token exists in the token vault
+
+            callback_url: OAuth2 callback URL
+
+            force_authentication: Whether to force authentication, if enabled, access token acquisition will require authorization
+
             custom_state: A state that allows applications to verify the validity of callbacks to callback_url
-            custom_parameters: A map of custom parameters to include in authorization request to the credential provider
-                               Note: these parameters are in addition to standard OAuth 2.0 flow parameters
+
+            custom_parameters: A map of custom parameters to be included in the OAuth2 authorization request to the credential provider,
+                           which will be passed through and carried in the callback to the callback URL.
+
             credential: Optional credential for fetching the OAuth2 access token, used for calling data APIs.
             If not provided, defaults to the credential obtained when initializing the Identity Client.
+
             poll_for_token: Whether to poll for the token when authorization is required. If False, when getting OAuth Token and an authorization URL is returned, an exception will be thrown after calling on_auth_url.
+
         Returns:
             The access token string
 
@@ -203,7 +217,6 @@ class IdentityClient:
             RuntimeError: When the agent identity service does not return a token or an authorization URL
             Exception: Various other exceptions for error conditions
         """
-        self.logger.info("Getting OAuth2 token...")
 
         client = self.data_client
         if self.use_sts:
@@ -247,7 +260,6 @@ class IdentityClient:
                 request.session_uri = response_body.session_uri
 
             if poll_for_token:
-                self.logger.info("Waiting for OAuth2 token...")
                 return await self.poll_for_oauth2_token(request)
             else:
                 raise RuntimeError("Agent Identity service returned an authorization URL, authorization flow needs to be completed.")
@@ -283,6 +295,22 @@ class IdentityClient:
 
 
     async def get_sts_credential_client(self, workload_token: str, user_id: Optional[str], user_token: Optional[str]) -> CredentialClient:
+        """Get a STS credential client for the specified workload identity.
+
+        Args:
+            workload_token: Workload identity access token
+
+            user_id: User ID
+
+            user_token: User token
+
+        Returns:
+            A STS credential client
+
+        Raises:
+            Exception: Various other exceptions for error conditions
+        """
+
         cache_key = _get_sts_cache_key(workload_token, user_id, user_token)
         cached_credential = get_cached_credential(cache_key)
         if cached_credential:
@@ -298,6 +326,24 @@ class IdentityClient:
     async def assume_role_for_workload_identity(self, *, workload_token: str, role_session_name: str,
                                                            duration_seconds: Optional[int] = 3600,
                                                            policy: Optional[str] = None) -> STSCredential:
+        """
+        Assume a role for the specified workload identity and return STS credentials.
+
+        Args:
+            workload_token: Workload identity access token
+
+            role_session_name: Role session name
+
+            duration_seconds: Duration in seconds for the assumed role (default: 3600)
+
+            policy: Optional policy to apply to the assumed role
+
+        Returns:
+            STSCredential object containing the temporary credentials
+        """
+
+
+        self.logger.info("Assuming role for workload identity...")
 
         request = AssumeRoleForWorkloadIdentityRequest(
             workload_access_token=workload_token,
@@ -326,7 +372,9 @@ class IdentityClient:
         
         Args:
             request: GetResourceOAuth2TokenRequest object
+
             max_retries: Maximum number of retry attempts
+
             delay_sec: Delay in seconds between each retry
             
         Returns:

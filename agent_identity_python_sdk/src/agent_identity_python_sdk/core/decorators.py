@@ -36,18 +36,27 @@ def requires_access_token(
     custom_parameters: Optional[Dict[str, str]] = None,
     poll_for_token: bool = True,
 ) -> Callable:
+
     """Decorator that fetches an OAuth2 access token before calling the decorated function.
 
     Args:
-        credential_provider_name: The oauth2 credential provider name
+        credential_provider_name: The OAuth2 credential provider name
+
         inject_param_name: Parameter name to inject the token into
-        scopes: OAuth2 scopes
-        on_auth_url: Callback for handling authorization URLs
+
+        scopes: OAuth2 scopes list
+
+        on_auth_url: Callback function for handling authorization URLs when they are obtained
+
         auth_flow: Authentication flow type ("USER_FEDERATION")
+
         callback_url: OAuth2 callback URL
-        force_authentication: Force re-authentication
-        custom_parameters: A map of custom parameters to include in authorization request to the credential provider
-                           Note: these parameters are in addition to standard OAuth 2.0 flow parameters
+
+        force_authentication: Whether to force authentication, if enabled, access token acquisition will require authorization
+
+        custom_parameters: A map of custom parameters to be included in the OAuth2 authorization request to the credential provider,
+                           which will be passed through and carried in the callback to the callback URL.
+
         poll_for_token: Whether to poll for the token when authorization is required. If False, when getting OAuth Token and an authorization URL is returned, an exception will be thrown after calling on_auth_url.
 
     Returns:
@@ -83,8 +92,7 @@ def requires_access_token(
 
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs_func: Any) -> Any:
-            token = await _get_token()
-            kwargs_func[inject_param_name] = token
+            kwargs_func[inject_param_name] = await _get_token()
             return await func(*args, **kwargs_func)
 
         @wraps(func)
@@ -111,10 +119,11 @@ def requires_access_token(
 
 
 def requires_api_key(*, credential_provider_name: str, inject_param_name: str = "api_key") -> Callable:
-    """Decorator that fetches an API key before calling the decorated function.
+    """Decorator that fetches an api key before calling the decorated function.
 
     Args:
         credential_provider_name: The credential provider name
+
         inject_param_name: Parameter name to inject the API key into
 
     Returns:
@@ -169,12 +178,14 @@ def requires_sts_token(*, inject_param_name: str = "sts_credential",
                        session_duration: Optional[str] = 3600,
                        policy: Optional[str] = None
                        ) -> Callable:
-    """Decorator that fetches an STS credential before calling the decorated function.
+    """Decorator that fetches a STS token before calling the decorated function.
 
     Args:
         inject_param_name: Parameter name to inject the STS credential into
+
         session_duration: The duration in seconds for which the STS credential should be valid.
                           Defaults to 3600 seconds (1 hour).
+
         policy: An optional policy in JSON format that further restricts the permissions of the STS credential.
                 This policy is combined with the role's policy when issuing the credentials.
 
