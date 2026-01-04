@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-identity-python-sdk"
-version = "0.0.1.dev9"
+version = "0.1.1"
 description = "Python SDK for using Agent Identity Service"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
-    { name = "Shaoheng", email = "liuyuhao.lyh@alibaba-inc.com" }
+    { name = "shaoheng", email = "liuyuhao.lyh@alibaba-inc.com" }
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

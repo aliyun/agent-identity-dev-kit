@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.8"
 authors = [
-    {name = "Alibaba Cloud", email = "sdk-team@alibabacloud.com"}
+    {name = "lingwu", email = "yangzankai.yzk@alibaba-inc.com"}
 ]
 keywords = ["alibabacloud", "agent-identity", "cli", "ram", "workload-identity"]
 classifiers = [
