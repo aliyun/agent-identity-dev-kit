@@ -241,7 +241,7 @@ async def callback_for_oauth(request: OAuthCallbackRequest):
     """
     try:
         # Get OAuth configuration
-        client_id = read_local_config('inbound_app_id')
+        client_id = read_local_config('inbound_app_id') or get_app_config_with_default("INBOUND_APP_ID", None)
 
         # Check if necessary configurations exist
         if not all([client_id, redirect_uri]):
@@ -384,7 +384,7 @@ async def auth():
     Returns:
         str: Authorization link
     """
-    client_id = read_local_config('inbound_app_id')
+    client_id = read_local_config('inbound_app_id') or get_app_config_with_default("INBOUND_APP_ID", None)
 
     code_verifier = f"agent-identity-sample-pkce-verifier-{uuid.uuid4().__str__()}"
     state = uuid.uuid4().__str__()
