@@ -4,7 +4,7 @@ with open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="agent-identity-cli",
+    name="agent_identity_cli",
     version="0.1.1",
     description="Agent Identity Toolkit CLI for managing AI Agent identities",
     long_description=long_description,
@@ -12,7 +12,7 @@ setup(
     license="Apache-2.0",
     author="lingwu",
     author_email="yangzankai.yzk@alibaba-inc.com",
-    url="https://github.com/aliyun/agent-identity-dev-kit",  # 假设项目URL
+    url="https://github.com/aliyun/agent-identity-dev-kit",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.8",
