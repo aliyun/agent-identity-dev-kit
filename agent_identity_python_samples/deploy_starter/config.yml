@@ -22,4 +22,4 @@ SETUP_LONG_DESCRIPTION: "agentDev-starter services, supporting both direct execu
 FC_RUN_CMD: "python3 /code/python/deploy_starter/main.py"
 
 APP_REDIRECT_URI: "http://localhost:8090"
-MCP_SERVER: "https://openapi-mcp.cn-hangzhou.aliyuncs.com/accounts/1464366936967347/system/ResourceCenter/resourcecenter/id/hde29XWN0mkPaM7n/mcp"
+MCP_SERVER: "<your-mcp-server-endpoint>"
