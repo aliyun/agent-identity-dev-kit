@@ -3,17 +3,14 @@ import os
 import yaml
 import uuid
 
-# 读取requirements.txt中的依赖
 with open("requirements.txt") as f:
     requirements = f.read().splitlines()
 
-# 读取config.yml文件
 def read_config():
     config_path = os.path.join(os.path.dirname(__file__), 'deploy_starter', 'config.yml')
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-# 读取README.md文件
 def read_readme():
     readme_files = ["README.md", "README.rst", "README.txt"]
     for filename in readme_files:
@@ -22,20 +19,16 @@ def read_readme():
                 return fh.read()
     return "A FastAPI application with AgentScope runtime"
 
-# 读取配置
 config = read_config()
 
-# 获取配置值
 setup_package_name = config.get('SETUP_PACKAGE_NAME', 'deploy_starter')
 setup_module_name = config.get('SETUP_MODULE_NAME', 'main')
 setup_function_name = config.get('SETUP_FUNCTION_NAME', 'run_app')
 setup_command_name = config.get('SETUP_COMMAND_NAME', 'agentdev-starter')
 
-# 生成带UUID的包名
 base_name = config.get('SETUP_NAME', 'agentDev-starter')
 unique_name = f"{base_name}-{uuid.uuid4().hex[:8]}"
 
-# 创建包结构
 setup(
     name=unique_name,
     version=config.get('SETUP_VERSION', '0.1.0'),

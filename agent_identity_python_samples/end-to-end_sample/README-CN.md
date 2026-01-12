@@ -23,12 +23,7 @@ Agent Identity Python SDK 的完整演示，用于构建安全的、具备身份
   - 模拟获取今日日程（模拟：STS Token）
 
 ## 🏗️ 架构
-
-```
-用户 → 入站应用（前后端） → 代理 (main.py) → Agent Identity SDK → 外部工具/阿里云资源
-           ↑                   ↑                  ↑
-     阿里云OAuth2认证       工具 & MCP           凭证提供者
-```
+![framework.png](images/framework.png)
 
 ### 核心组件
 
@@ -97,7 +92,7 @@ Agent Identity Python SDK 的完整演示，用于构建安全的、具备身份
 ### 1. 克隆仓库
 ```bash
 git clone https://github.com/aliyun/agent-identity-dev-kit
-cd agent_identity_python_samples
+cd agent_identity_python_samples/end-to-end_sample
 ```
 
 ### 2. 安装依赖
@@ -170,7 +165,7 @@ python -m prepare
 MCP_SERVER: "<your-mcp-server-endpoint>"
 ```
 
-![MCP配置](deploy_starter/images/get_mcp_endpoint.png)
+![MCP配置](images/get_mcp_endpoint.png)
 
 ## ▶️ 运行代理
 
@@ -222,7 +217,7 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ```
 
 6. 在高代码应用控制台上，点击查看详情，进入高代码应用所在函数计算实例的控制台。
-![images/go_to_fc.png](deploy_starter/images/go_to_fc.png)
+![images/go_to_fc.png](images/go_to_fc.png)
 
 7. 在函数计算控制台上为高代码应用对应的函数计算实例创建并配置实例角色（需要选择"阿里云服务"，并且"受信服务"需要选择"函数计算"），为角色赋予`AliyunAgentIdentityDataFullAccess`系统策略。
 
@@ -244,7 +239,7 @@ python -m application.backend.app
 如果在上一步中选择将代理服务部署到百炼，则需要在启动服务前配置代理服务的地址和访问Token。
 
 进入[百炼控制台](https://bailian.console.aliyun.com/?tab=app#/app-center)，找到刚才部署的高代码应用，找到触发器的公网访问地址和鉴权Token，如图所示：
-![images/get_deploy_info.png](deploy_starter/images/get_deploy_info.png)
+![images/get_deploy_info.png](images/get_deploy_info.png)
 
 将公网访问地址和鉴权Token配置到config.yml中：
 ```bash

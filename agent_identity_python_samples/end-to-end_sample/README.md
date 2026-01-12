@@ -23,11 +23,7 @@ Key features include:
 
 ## 🏗️ Architecture
 
-```
-User → Inbound Application (Frontend & Backend) → Agent (main.py) → Agent Identity SDK → External Tools/Alibaba Cloud Resources
-           ↑                   ↑                  ↑
-     Alibaba Cloud OAuth2 Authentication       Tools & MCP           Credential Provider
-```
+![framework-en.png](images/framework-en.png)
 
 ### Core Components
 
@@ -96,7 +92,7 @@ Obtain a [DashScope API key](https://bailian.console.aliyun.com/?tab=model#/api-
 ### 1. Clone Repository
 ```bash
 git clone https://github.com/aliyun/agent-identity-dev-kit
-cd agent_identity_python_samples
+cd agent_identity_python_samples/end-to-end_sample
 ```
 
 ### 2. Install Dependencies
@@ -169,7 +165,7 @@ This script performs the following operations:
 MCP_SERVER: "<your-mcp-server-endpoint>"
 ```
 
-![MCP Configuration](deploy_starter/images/get_mcp_endpoint.png)
+![MCP Configuration](images/get_mcp_endpoint.png)
 
 ## ▶️ Running the Agent
 
@@ -221,7 +217,7 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ```
 
 6. On the high-code application console, click "View Details" to enter the console of the function compute instance where the high-code application resides.
-![images/go_to_fc.png](deploy_starter/images/go_to_fc.png)
+![images/go_to_fc.png](images/go_to_fc.png)
 
 7. On the function compute console, create and configure an instance role for the corresponding function compute instance of the high-code application (need to select "Alibaba Cloud Service" and "Trusted Service" needs to select "Function Compute"), and assign the `AliyunAgentIdentityDataFullAccess` system policy to the role.
 
@@ -242,7 +238,7 @@ Backend service runs on `http://localhost:8090` with the following endpoints:
 If in the previous step you chose to deploy the agent service to BAILIAN, you need to configure the agent service address and access token before starting the service.
 
 Enter the [BAILIAN Console](https://bailian.console.aliyun.com/?tab=app#/app-center), find the high-code application deployed earlier, find the trigger's public network access address and authentication token, as shown in the figure:
-![images/get_deploy_info.png](deploy_starter/images/get_deploy_info.png)
+![images/get_deploy_info.png](images/get_deploy_info.png)
 
 Configure the public network access address and authentication token in config.yml:
 ```bash

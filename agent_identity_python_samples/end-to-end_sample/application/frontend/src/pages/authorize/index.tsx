@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
 import services from '../../services';
-import { setSessionId } from '../../utils/cookie';
+import { setSessionId } from '../../utils/cookie.ts';
 
 export default function PageAuth() {
   const [searchParams] = useSearchParams();

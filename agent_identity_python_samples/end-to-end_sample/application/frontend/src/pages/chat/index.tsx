@@ -1,6 +1,6 @@
 import { ConfigProvider, carbonTheme } from '@agentscope-ai/design';
 
-import Chat from '../../containers/Chat';
+import Chat from '../../containers/Chat.tsx';
 export default function PageChat() {
     
   return (

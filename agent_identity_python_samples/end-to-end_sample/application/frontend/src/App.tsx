@@ -3,7 +3,7 @@ import { RouterProvider, createBrowserRouter, Navigate } from 'react-router-dom'
 import PageChat from './pages/chat';
 import PageLogin from './pages/login';
 import PageAuth from './pages/authorize';
-import { getSessionId } from './utils/cookie';
+import { getSessionId } from './utils/cookie.ts';
 
 function AuthGuard() {
   const sessionId = getSessionId();

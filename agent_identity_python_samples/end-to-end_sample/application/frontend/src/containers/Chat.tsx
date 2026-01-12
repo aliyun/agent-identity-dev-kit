@@ -11,11 +11,11 @@ import {
   createCard
 } from '@agentscope-ai/chat';
 
-import sessionLocalStorage from '../utils/sessionLocalStorage';
-import { getSessionId } from '../utils/cookie';
+import sessionLocalStorage from '../utils/sessionLocalStorage.ts';
+import { getSessionId } from '../utils/cookie.ts';
 import services from '../services';
 
-import Header from './Header';
+import Header from './Header.tsx';
 
 export default function Chat() {
   const refChat = useRef<ChatAnywhereRef>(null);

@@ -1,9 +1,9 @@
 import { Button } from 'antd';
 import { useNavigate } from 'react-router-dom';
 
-import { clearSessionId } from '../utils/cookie';
+import { clearSessionId } from '../utils/cookie.ts';
 
-import ModelSelect from './ModelSelect';
+import ModelSelect from './ModelSelect.tsx';
 
 export default function Header() {
   const navigator = useNavigate();
