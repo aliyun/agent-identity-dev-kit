@@ -120,13 +120,32 @@ export AGENT_IDENTITY_WORKLOAD_IDENTITY_NAME=<your-workload-identity-name>
 ```
 
 6. On the high-code application console, click "View Details" to enter the console of the function compute instance where the high-code application resides.
-![images/go_to_fc.png](deploy_starter/images/go_to_fc.png)
 
 7. On the function compute console, create and configure an instance role for the corresponding function compute instance of the high-code application (need to select "Alibaba Cloud Service", and "Trusted Service" needs to select "Function Compute"), and assign the `AliyunAgentIdentityDataFullAccess` system policy to the role.
 
 ### Invocation
 
-#### 
+Can be invoked via curl command:
+
+```bash
+curl -N \
+  -X POST "http://localhost:8080/process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Hello" }
+        ]
+      }
+    ],
+    "session_id": "<your-session-id>",
+    "user_id": "<your-user-id>"
+  }'
+```
+
+Where `<your-session-id>` and `<your-user-id>` are session ID and user ID respectively, which can be customized.
 
 ## 🤝 Support
 

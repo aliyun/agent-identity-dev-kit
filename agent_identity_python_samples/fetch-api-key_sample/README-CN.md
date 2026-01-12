@@ -87,6 +87,29 @@ python -m deploy_starter.main
 - `/process` - 主要代理交互端点
 - `/health` - 健康检查端点
 
+### 调用
+
+可以通过curl命令进行调用：
+```bash
+curl -N \
+  -X POST "http://localhost:8080/process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "Hello" }
+        ]
+      }
+    ],
+    "session_id": "<your-session-id>",
+    "user_id": "<your-user-id>"
+  }'
+```
+
+其中`<your-session-id>`和`<your-user-id>`为会话ID和用户ID，可自定义。
+
 ### （可选）部署为百炼高代码应用
 
 如果需要部署到百炼高代码应用，这里参照[百炼高代码部署说明](https://bailian.console.aliyun.com/?tab=api#/api/?type=app&url=2983030)给出具体的部署流程。
@@ -125,9 +148,6 @@ export AGENT_IDENTITY_WORKLOAD_IDENTITY_NAME=<your-workload-identity-name>
 
 7. 在函数计算控制台上为高代码应用对应的函数计算实例创建并配置实例角色（需要选择"阿里云服务"，并且"受信服务"需要选择"函数计算"），为角色赋予`AliyunAgentIdentityDataFullAccess`系统策略。
 
-### 调用
-
-#### 
 
 ## 🤝 支持
 
