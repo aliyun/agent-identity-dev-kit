@@ -149,10 +149,9 @@ async def forward_to_main_service(agent_request: AgentRequest):
     try:
         # Construct request data, keeping consistent with agent interface in main.py
         request_data = {
-            "messages": agent_request.input,
+            "input": agent_request.input,
             "session_id": agent_request.session_id,
-            "user_id": agent_request.user_id,
-            "stream": 'true'
+            "user_id": agent_request.user_id
         }
         
         logger.info(f"Forwarding request to main service: {request_data}")
