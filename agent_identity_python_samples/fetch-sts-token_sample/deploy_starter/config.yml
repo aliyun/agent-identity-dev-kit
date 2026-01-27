@@ -1,0 +1,22 @@
+APP_NAME: "AgentDev Starter"
+DEBUG: false
+
+HOST: "127.0.0.1"
+PORT: 8080
+RELOAD: true
+
+DASHSCOPE_API_KEY: ""
+DASHSCOPE_MODEL_NAME: "qwen-turbo"
+
+LOG_LEVEL: "INFO"
+
+SETUP_PACKAGE_NAME: "deploy_starter"
+SETUP_MODULE_NAME: "main"
+SETUP_FUNCTION_NAME: "run_app"
+SETUP_COMMAND_NAME: "agentdev-starter"
+SETUP_NAME: "agentDev-starter"
+SETUP_VERSION: "0.1.0"
+SETUP_DESCRIPTION: "agentDev-starter"
+SETUP_LONG_DESCRIPTION: "agentDev-starter services, supporting both direct execution and uvicorn deployment"
+
+FC_RUN_CMD: "python3 /code/python/deploy_starter/main.py"
