@@ -1,0 +1,6 @@
+agentrun-sdk[langchain,server]>=0.0.3
+alibabacloud-agentidentity20250901>=1.0.1
+alibabacloud-agentidentitydata20251127>=1.0.2
+agent-identity-cli>=0.1.1
+agent-identity-python-sdk>=0.1.1
+alibabacloud-oss-v2

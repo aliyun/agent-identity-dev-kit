@@ -5,7 +5,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setup(
     name="agent_identity_python_sdk",
-    version="0.1.1",
+    version="0.1.2",
     description="Python SDK for using Agent Identity Service",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -20,9 +20,9 @@ setup(
         "alibabacloud-agentidentity20250901>=1.0.1",
         "alibabacloud-agentidentitydata20251127>=1.0.2",
         "setuptools",
-        "pydantic==2.11.7",
-        "urllib3==2.3.0",
-        "utils==1.0.2",
+        "pydantic>=2.11.7",
+        "urllib3>=2.3.0",
+        "utils>=1.0.2",
     ],
     extras_require={
         "dev": [
