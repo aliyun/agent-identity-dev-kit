@@ -32,6 +32,7 @@
 使用您的OAuth2端点，例如`https://oauth.aliyun.com`，创建Agent访问凭证，该身份提供商需要支持颁发合法的、可验证的JWT（JSON Web Token）以作为Agent的入站凭证。
 
 在AgentRun控制台进入：其他-->凭证管理，使用您的OAuth2 URL端点创建一个入站凭证，认证类型为`JWT（JSON Web Token）`，可参照[AgentRun产品文档](https://help.aliyun.com/zh/functioncompute/fc/voucher-management?spm=a2c4g.11186623.help-menu-2508973.d_3_7.73ee14eex9CNet#9a2fdcfcfatut)。
+> 备注： 需要配置的不是.well-known/openid-configuration的地址，而是其中jwks_uri对应的地址。
 
 ![创建JWT凭证](images/create_inbound_oauth_credential.png)
 
@@ -87,8 +88,10 @@ CLI将**创建如下工作负载身份和角色**：
 进入Agent Identity控制台，创建入站身份提供商：
 ![创建入站身份提供商](images/create_agentidentity_inbound_provider.png)
 
+
 进入工作负载身份页面，关联工作负载身份和上面创建的入站身份提供商：
 ![关联工作负载身份和入站身份提供商](images/associate_workload_identity_with_inbound_provider.png)
+
 
 ## 📦 安装和部署到AgentRun
 
@@ -117,6 +120,7 @@ zip -r agentrun-langchain_sample.zip .
 ```bash
 export AGENT_IDENTITY_WORKLOAD_IDENTITY_NAME=<your-workload-identity-name>
 ```
+其中`MODEL_SERVICE_NAME`为创建AgentRun大语言模型时指定的模型服务名称，例如本示例名称为：`model-s75-qw`，`MODEL_NAME`为具体模型的名称，例如本示例名称为：`qwen-plus`。
 ![设置环境变量](images/agent_env.png)
 
 在配置实例角色时候，确保角色权限策略包含`AgentIdentityFullAccess`：
@@ -152,6 +156,21 @@ curl -N \
 `<your-session-id>`为会话ID，可自定义。
 `<json-web-token>`为从OAuth2身份提供商处获取的用户JWT，例如如果配置为阿里云OAuth2服务，可参照[阿里云官方文档](https://help.aliyun.com/zh/ram/access-alibaba-cloud-apis-from-a-web-application?spm=a2c4g.11186623.help-menu-28625.d_4_1_0.29707ec3U1MC9m#info-o5u-utp-d6l)，获取用户id_token（JWT）。
 `<agent-endpoint>`为AgentRun部署的Agent的访问端点，可在AgentRun控制台进入Agent详情页中查看。
+
+当访问第三方服务的时候，例如本示例中的访问钉钉文档，需要预先做好钉钉应用的接入，具体配置可以参考文档：[在Agent中安全访问钉钉](https://help.aliyun.com/zh/agentidentity/secure-access-to-dingtalk-in-agent)。
+
+访问钉钉的授权地址需要手工输入到浏览器中，并访问授权。授权响应参考：
+```bash
+data: {"id": "chatcmpl-74b9c01d5100", "object": "chat.completion.chunk", "created": 1769765835, "model": "agentrun", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Please click the link to authorize Write to DingTalk document: https://agentidentitydata.cn-beijing.aliyuncs.com/oauth2/authorize?request_uri=urn:ietf:params:oauth:request_uri_parameter \n\n"}, "finish_reason": null}]}
+```
+授权完成后默认回跳本地应用地址，本示例中应用地址为`http://localhost:8090/callback`，可以通过环境变量`APP_REDIRECT_URI`进行替换Endpoint，例如：
+```bash
+export APP_REDIRECT_URI=http://localhost:8090
+```
+> 备注：本地应用地址需要手动配置到WorkloadIdentity中的的应用回调地址中，参考[工作负载身份管理](https://help.aliyun.com/zh/agentidentity/workload-identity-management)文档中，“为工作负载身份设置应用回调地址”章节
+
+回跳完成后，获取回调链接中的`session_uir`参数，并主动调用`CompleteResourceTokenAuth`, 完成授权流程。调用参考SDK中`IdentityClient.confirm_user_auth`方法。
+```
 
 ## 🤝 支持
 
