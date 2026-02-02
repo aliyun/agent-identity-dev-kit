@@ -101,6 +101,8 @@ cd agent_identity_python_samples/agentrun-langchain_sample
 pip install -r requirements.txt -t ./python
 ```
 
+Note: Please ensure that the environment where you execute the installation command is consistent with the AgentRun deployment environment, including operating system and Python version.
+
 ### 3. Package as zip
 Package the current directory as a zip file for creating an agent via zip package:
 ```bash

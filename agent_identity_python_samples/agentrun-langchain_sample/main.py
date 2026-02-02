@@ -34,32 +34,10 @@ if SANDBOX_NAME and not SANDBOX_NAME.startswith("<"):
 else:
     logger.warning("SANDBOX_NAME 未设置或未替换，跳过加载沙箱工具。")
 
-@requires_access_token(
-    credential_provider_name="test-provider-for-mcp-oauth",
-    scopes=["profile", "openid", "aliuid", "/acs/mcp-server"],
-    auth_flow="USER_FEDERATION",
-    on_auth_url= lambda url: AgentContext.on_auth_url(url, "Tool"),
-    force_authentication=True,  # When forced authentication is enabled, a new authorization link will be returned every time an access token is obtained
-    callback_url="http://localhost:8090",
-    inject_param_name="access_token",
-)
-def get_access_token(access_token: str) :
-    print(access_token)
-    return access_token
-
-def list_ram_users():
-    """
-    list ram users with access token.
-
-    Returns: ram users' name
-
-    """
-    get_access_token()
-    return "alice,bob"
 
 agent = create_agent(
     model=model(MODEL_SERVICE_NAME, model=MODEL_NAME),
-    tools=[*code_interpreter_tools, list_ram_users, write_dingtalk_file, get_object_from_oss],
+    tools=[*code_interpreter_tools, write_dingtalk_file, get_object_from_oss],
     system_prompt="你是一个 AgentRun 的 AI 专家，可以通过沙箱运行代码来回答用户的问题。",
 )
 

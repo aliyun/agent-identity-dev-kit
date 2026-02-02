@@ -106,6 +106,8 @@ cd agent_identity_python_samples/agentrun-langchain_sample
 pip install -r requirements.txt -t ./python
 ```
 
+注意，请确保执行安装依赖命令的环境与AgentRun的部署环境一致，包括操作系统和Python版本，否则可能导致代码依赖不匹配。您可以在AgentRun实例的Web IDE中运行该命令，然后直接部署到AgentRun实例中，来避免环境和版本问题。
+
 ### 3. 打包为zip
 将当前目录打包为zip文件，用于通过zip包创建agent：
 ```bash
