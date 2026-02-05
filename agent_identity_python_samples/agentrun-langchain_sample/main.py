@@ -52,6 +52,7 @@ async def collect_from_stream(stream, queue):
 def invoke_agent(request: AgentRequest):
     bearer_token = request.raw_request.headers.get("Authorization")[7:]
     input: Any = {"messages": [{"content": message.content, "role": message.role} for message in request.messages]}
+    session_id = request.raw_request.headers.get("X-app-custom-session-id")
     converter = AgentRunConverter()
 
     queue = asyncio.Queue()
@@ -62,6 +63,7 @@ def invoke_agent(request: AgentRequest):
             async def stream_generator():
                 AgentContext.queue_context.set(queue)
                 AgentIdentityContext.set_user_token(bearer_token)
+                AgentIdentityContext.set_custom_state(session_id)
                 result = agent.astream_events(input)
                 async for chunk in result:
                     print(chunk)

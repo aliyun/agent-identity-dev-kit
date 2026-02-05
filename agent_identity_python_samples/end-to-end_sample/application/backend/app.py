@@ -147,24 +147,76 @@ async def forward_to_main_service(agent_request: AgentRequest):
         bytes: Response chunks from main service
     """
     try:
+        # Extract content from the last card of the last message if available
+        extracted_content = None
+        try:
+            if agent_request.input and len(agent_request.input) > 0:
+                # Get the last element from input array
+                last_input_element = agent_request.input[-1]
+                if 'content' in last_input_element and isinstance(last_input_element['content'], list):
+                    # Get the first (and likely only) element from content array
+                    content_item = last_input_element['content'][0]
+                    if 'text' in content_item:
+                        # Parse the JSON string in the text field
+                        messages_array = json.loads(content_item['text'])
+                        if isinstance(messages_array, list) and len(messages_array) > 0:
+                            # Get the last message from the messages array
+                            last_message = messages_array[-1]
+                            if 'cards' in last_message and isinstance(last_message['cards'], list) and len(last_message['cards']) > 0:
+                                first_card = last_message['cards'][0]
+                                if 'data' in first_card and 'content' in first_card['data']:
+                                    extracted_content = first_card['data']['content']
+                                    logger.info(f"Extracted content from last card: {extracted_content}")
+        except Exception as e:
+            logger.error(f"Error extracting content from cards: {e}")
+            # Continue with normal flow even if extraction fails
+            
         # Construct request data, keeping consistent with agent interface in main.py
-        request_data = {
-            "input": agent_request.input,
-            "session_id": agent_request.session_id,
-            "user_id": agent_request.user_id
-        }
+        agent_framework = get_app_config_with_default('AGENT_FRAMEWORK', "AgentScope")
+        if agent_framework == "agentRun":
+            request_data = {
+                "messages":[
+                    {
+                        "role":"user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": extracted_content,
+                                "user_id": agent_request.user_id,
+                            }
+                        ],
+                    }
+                ],
+                "stream": True
+            }
+        else:
+            request_data = {
+                "input": agent_request.input,
+                "session_id": agent_request.session_id,
+                "user_id": agent_request.user_id,
+            }
         
         logger.info(f"Forwarding request to main service: {request_data}")
         
+        headers={"Content-Type": "application/json"}
+        # Determine authorization header based on configuration 
+        agent_framework = get_app_config_with_default('AGENT_FRAMEWORK', "AgentScope")
+        auth_header_value = "Bearer MOCK"  # Default fallback
+        
+        if agent_framework == "agentRun":
+            # Use OIDC token directly when configured as agentRun
+            headers.setdefault("Authorization", f"Bearer {agent_request.user_id}")
+            headers.setdefault("X-app-custom-session-id", agent_request.session_id)
+        else:
+            # Keep original behavior for other configurations
+            headers.setdefault("Authorization", f"Bearer {get_app_config_with_default("AGENT_BEARER_TOKEN", "MOCK")}")
         # Send POST request to main service
         async with httpx.AsyncClient(timeout=180.0) as client:
             async with client.stream(
                 "POST", 
                 get_app_config_with_default("AGENT_ENDPOINT", "http://localhost:8080/process"),
                 json=request_data,
-                headers={"Content-Type": "application/json",
-                         "Authorization": "Bearer " + get_app_config_with_default("AGENT_BEARER_TOKEN", "MOCK"),
-                         }
+                headers=headers
             ) as response:
                 logger.info(f"Received response from main service. Status: {response.status_code}")
                 
@@ -337,7 +389,7 @@ async def callback(session_uri: str, state: str, request: Request):
     """
     # Get login_session_id from cookies
     login_session_id = request.cookies.get("oauthSessionId")
-    
+    logger.info(f"Received login_session_id from cookie: {login_session_id}")
     # Check if login_session_id exists
     if not login_session_id:
         raise HTTPException(status_code=400, detail="Missing login_session_id cookie")
@@ -346,6 +398,7 @@ async def callback(session_uri: str, state: str, request: Request):
     # Check if the state (i.e., the chat session ID passed in when initiating chat) exists
     # Need to verify that its corresponding login session ID matches the session ID in the current caller's cookie
     # Otherwise, the authorization link may have been forwarded to someone else, in which case confirmation should be denied
+    logger.info(f"Received state from query: {user_session_map.get(state)}")
     if user_session_map.get(state) is None:
         raise HTTPException(status_code=400, detail="Invalid state")
 
@@ -354,6 +407,7 @@ async def callback(session_uri: str, state: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid login_session_id")
 
     try:
+        logger.info(f"Confirming user auth with session_uri: {session_uri} and user_token: {user_token_map[state_session_id]}")
         identity_client.confirm_user_auth(session_uri=session_uri, user_token=user_token_map[state_session_id])
     except Exception as e:
         logger.error(e)
