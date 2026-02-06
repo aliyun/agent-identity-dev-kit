@@ -236,8 +236,8 @@ Configure the following content in the `app.yml` file under the `backend` direct
 ```yaml
 INBOUND_REDIRECT_URI: "your frontend redirect uri, e.g. http://localhost:8090"
 AGENT_FRAMEWORK: "agent framework: agentScope or agentRun"
-AGENT_BEARER_TOKEN: "your agent api access token"
-AGENT_ENDPOINT: "your agent api endpoint"
+AGENT_BEARER_TOKEN: "your agent api access token. For local deployments, the accessToken configuration is not applicable."
+AGENT_ENDPOINT: "your agent api endpoint, e.g. http://localhost:8080/process depends on your agent deployment config"
 ```
 
 In the root directory, execute to start services:
