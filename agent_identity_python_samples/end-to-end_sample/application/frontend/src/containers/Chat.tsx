@@ -107,23 +107,43 @@ export default function Chat() {
         }
 
         const data = JSON.parse(chunk.data);
-        if (data.object ==='response' && data.status === 'completed') {
-          onFinish('finished');
-          break;
-        } 
+        if (data.model === 'agentrun') {
+          if (data.choices) {
+            let content = contentMap.get(data.id) || '';
+            if (data.choices[0].finish_reason === 'stop') {
+              onFinish('finished');
+              break;
+            }
+            content = content + (data.choices[0]?.delta.content || '');
+            contentMap.set(data.id, content);
+            currentQA.current.answer.cards = Array.from(contentMap).map(([key, value]) => {
+              return createCard('Text', {
+                content: value,
+                typing: true,
+                msgStatus: 'generating',
+                id: key
+              });
+            }); 
+          }
+        } else {
+          if (data.object ==='response' && data.status === 'completed') {
+            onFinish('finished');
+            break;
+          } 
 
-        if (data.type === 'text' && data.delta) {
-          let content = contentMap.get(data.msg_id) || '';
-          content = content + (data.text || '');
-          contentMap.set(data.msg_id, content);
-          currentQA.current.answer.cards = Array.from(contentMap).map(([key, value]) => {
-            return createCard('Text', {
-              content: value,
-              typing: true,
-              msgStatus: 'generating',
-              id: key
-            });
-          }); 
+          if (data.type === 'text' && data.delta) {
+            let content = contentMap.get(data.msg_id) || '';
+            content = content + (data.text || '');
+            contentMap.set(data.msg_id, content);
+            currentQA.current.answer.cards = Array.from(contentMap).map(([key, value]) => {
+              return createCard('Text', {
+                content: value,
+                typing: true,
+                msgStatus: 'generating',
+                id: key
+              });
+            }); 
+          }
         }
         refChat.current?.updateMessage(currentQA.current.answer);
       }

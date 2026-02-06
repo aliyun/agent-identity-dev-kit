@@ -225,6 +225,22 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ### 启动前后端服务
 
 #### 代理服务部署在本地的情况
+检查前端服务配置文件，在当前根目录下创建`.config.json`文件，并配置以下内容：
+```json
+{
+ "workload_identity_name":"your workload identity name",
+ "inbound_app_id":"your login oauth native client id"
+}
+```
+检查后端服务配置
+在`backend`目录下的`app.yml`文件中配置以下内容：
+```yaml
+INBOUND_REDIRECT_URI: "your frontend redirect uri, e.g. http://localhost:8090"
+AGENT_FRAMEWORK: "agent framework: agentScope or agentRun"
+AGENT_BEARER_TOKEN: "your agent api access token. For local deployments, the accessToken configuration is not applicable."
+AGENT_ENDPOINT: "your agent api endpoint, e.g. http://localhost:8080/process depends on your agent deployment config"
+```
+
 在根目录下执行启动服务：
 ```bash
 python -m application.backend.app
