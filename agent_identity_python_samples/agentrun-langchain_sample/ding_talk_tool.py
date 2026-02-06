@@ -50,6 +50,11 @@ class DingTalkClient:
 def on_auth(url: str):
     AgentContext.on_auth_url(url, "Write to DingTalk document")
 
+"""
+If you want to authenticate and authorize with dingtalk account every time you call the tool, you can just follow theses steps:
+1.  set force_authentication=True to enable force authentication
+2.  add custom parameters to the dingtalk oauth flow to enable force user authorization
+"""
 @requires_access_token(
     credential_provider_name="test-provider-for-dingtalk",
     scopes=["openid", "corpid"],
@@ -58,6 +63,7 @@ def on_auth(url: str):
     # force_authentication=True,
     callback_url= f"{os.getenv('APP_REDIRECT_URI', 'http://localhost:8090')}/callback",
     inject_param_name="access_token",
+    #  custom_parameters={"prompt": "consent"}
 )
 async def ding_talk_tool(
         content: str,
