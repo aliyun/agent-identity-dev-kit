@@ -9,6 +9,7 @@ from agent_identity_python_sdk.core.decorators import (
     requires_access_token,
     requires_api_key,
     requires_sts_token,
+    requries_workload_access_token,
     _get_workload_access_token,
     _get_workload_access_token_local,
     _has_running_loop
@@ -517,6 +518,108 @@ class TestGetWorkloadAccessToken:
                 assert token == "new-token"
                 mock_context.get_workload_access_token.assert_called_once()
                 mock_local.assert_called_once()
+
+
+class TestRequriesWorkloadAccessToken:
+    """Test cases for requries_workload_access_token decorator."""
+
+    @pytest.mark.asyncio
+    async def test_requries_workload_access_token_async_function(self):
+        """Test requries_workload_access_token decorator with async function."""
+        # Setup mocks
+        mock_identity_client = Mock()
+        
+        with patch('agent_identity_python_sdk.core.decorators.IdentityClient') as mock_client_class:
+            mock_client_class.return_value = mock_identity_client
+            
+            with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token') as mock_get_token:
+                mock_get_token.return_value = "workload-access-token"
+
+                @requries_workload_access_token(inject_param_name="workload_token")
+                async def sample_async_function(workload_token):
+                    return f"Workload Token: {workload_token}"
+
+                # Execute
+                result = await sample_async_function()
+
+                # Verify
+                assert result == "Workload Token: workload-access-token"
+                mock_get_token.assert_called_once()
+
+    def test_requries_workload_access_token_sync_function(self):
+        """Test requries_workload_access_token decorator with sync function."""
+        # Setup mocks
+        mock_identity_client = Mock()
+        
+        with patch('agent_identity_python_sdk.core.decorators.IdentityClient') as mock_client_class:
+            mock_client_class.return_value = mock_identity_client
+            
+            with patch('agent_identity_python_sdk.core.decorators._has_running_loop', return_value=False):
+                with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token') as mock_get_token:
+                    mock_get_token.return_value = "workload-access-token"
+
+                    @requries_workload_access_token(inject_param_name="workload_token")
+                    def sample_function(workload_token):
+                        return f"Workload Token: {workload_token}"
+
+                    # Execute
+                    result = sample_function()
+
+                    # Verify
+                    assert result == "Workload Token: workload-access-token"
+                    mock_get_token.assert_called_once()
+
+    def test_requries_workload_access_token_default_param_name(self):
+        """Test requries_workload_access_token decorator with default parameter name."""
+        # Setup mocks
+        mock_identity_client = Mock()
+        
+        with patch('agent_identity_python_sdk.core.decorators.IdentityClient') as mock_client_class:
+            mock_client_class.return_value = mock_identity_client
+            
+            with patch('agent_identity_python_sdk.core.decorators._has_running_loop', return_value=False):
+                with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token') as mock_get_token:
+                    mock_get_token.return_value = "workload-access-token"
+
+                    @requries_workload_access_token()
+                    def sample_function(workload_access_token):
+                        return f"Workload Token: {workload_access_token}"
+
+                    # Execute
+                    result = sample_function()
+
+                    # Verify
+                    assert result == "Workload Token: workload-access-token"
+                    mock_get_token.assert_called_once()
+
+    def test_requries_workload_access_token_async_in_async_env(self):
+        """Test requries_workload_access_token decorator with sync function in async environment."""
+        # Setup mocks
+        mock_identity_client = Mock()
+        
+        with patch('agent_identity_python_sdk.core.decorators.IdentityClient') as mock_client_class:
+            mock_client_class.return_value = mock_identity_client
+            
+            with patch('agent_identity_python_sdk.core.decorators._has_running_loop', return_value=True):
+                with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token') as mock_get_token:
+                    mock_get_token.return_value = "workload-access-token"
+
+                    with patch('concurrent.futures.ThreadPoolExecutor') as mock_executor:
+                        mock_future = MagicMock()
+                        mock_future.result.return_value = "workload-access-token"
+                        mock_executor.return_value.__enter__.return_value.submit.return_value = mock_future
+
+                        @requries_workload_access_token(inject_param_name="workload_token")
+                        def sample_function(workload_token):
+                            return f"Workload Token: {workload_token}"
+
+                        # Execute
+                        result = sample_function()
+
+                        # Verify
+                        assert result == "Workload Token: workload-access-token"
+                        mock_executor.return_value.__enter__.return_value.submit.assert_called_once()
+
 
 
 class TestConcurrency:
