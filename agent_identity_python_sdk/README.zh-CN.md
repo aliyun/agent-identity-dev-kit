@@ -95,7 +95,7 @@ my_function()
 from agent_identity_python_sdk.core.decorators import requires_workload_access_token
 @requires_workload_access_token(inject_param_name="workload_access_token")
 def my_function(workload_access_token: str):
-    # 在这里使用 sts_credential
+    # 在这里使用 workload_access_token
     print(f"Workload Access Token: {workload_access_token}")
     # 您的业务逻辑
 

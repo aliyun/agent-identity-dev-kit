@@ -5,7 +5,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setup(
     name="agent_identity_python_sdk",
-    version="0.1.2",
+    version="0.1.3.dev",
     description="Python SDK for using Agent Identity Service",
     long_description=long_description,
     long_description_content_type="text/markdown",

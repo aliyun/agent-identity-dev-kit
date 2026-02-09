@@ -89,6 +89,20 @@ def my_function(sts_credential: STSCredential):
 my_function()
 ```
 
+### Using Decorators to Obtain Workload Credentials
+
+```python
+from agent_identity_python_sdk.core.decorators import requires_workload_access_token
+@requires_workload_access_token(inject_param_name="workload_access_token")
+def my_function(workload_access_token: str):
+    # use workload_access_token here
+    print(f"Workload Access Token: {workload_access_token}")
+    # Your business logic
+
+# call the function
+my_function()
+```
+
 ## Core Modules
 
 ### IdentityClient
