@@ -117,7 +117,6 @@ def requires_access_token(
 
     return decorator
 
-
 def requires_api_key(*, credential_provider_name: str, inject_param_name: str = "api_key") -> Callable:
     """Decorator that fetches an api key before calling the decorated function.
 
@@ -235,6 +234,52 @@ def requires_sts_token(*, inject_param_name: str = "sts_credential",
 
     return decorator
 
+def requries_workload_access_token(*, inject_param_name: str = "workload_access_token") -> Callable:
+    """Decorator that fetches a workload access token before calling the decorated function.
+
+    Args:
+        inject_param_name: Parameter name to inject the workload access token into
+
+    Returns:
+        Decorator function that handles workload access token acquisition and injection
+    """
+
+    def decorator(func: Callable) -> Callable:
+        client = IdentityClient(get_region())
+
+        async def _get_workload_token() -> str:
+            user_id = AgentIdentityContext.get_user_id()
+            id_token = AgentIdentityContext.get_user_token()
+            
+            return await _get_workload_access_token(client, user_id=user_id, id_token=id_token)
+
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            workload_access_token = await _get_workload_token()
+            kwargs[inject_param_name] = workload_access_token
+            return await func(*args, **kwargs)
+
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            if _has_running_loop():
+                ctx = contextvars.copy_context()
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(ctx.run, asyncio.run, _get_workload_token())
+                    workload_access_token = future.result()
+            else:
+                workload_access_token = asyncio.run(_get_workload_token())
+
+            kwargs[inject_param_name] = workload_access_token
+            return func(*args, **kwargs)
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+
+    return decorator
 
 async def _get_workload_access_token_local(client: IdentityClient, user_id: Optional[str] = None, id_token: Optional[str] = None) -> str:
     workload_identity_name = os.environ.get("AGENT_IDENTITY_WORKLOAD_IDENTITY_NAME", None)
@@ -251,7 +296,6 @@ async def _get_workload_access_token_local(client: IdentityClient, user_id: Opti
 
     return client.get_workload_access_token(workload_identity_name, user_id=user_id, user_token=id_token)
 
-
 async def _get_workload_access_token(client: IdentityClient,
         user_id: Optional[str] = None,
         id_token: Optional[str] = None) -> str:
@@ -260,7 +304,6 @@ async def _get_workload_access_token(client: IdentityClient,
         return token
     else:
         return await _get_workload_access_token_local(client, user_id, id_token)
-
 
 def _has_running_loop() -> bool:
     try:
