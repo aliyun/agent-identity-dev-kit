@@ -234,7 +234,7 @@ def requires_sts_token(*, inject_param_name: str = "sts_credential",
 
     return decorator
 
-def requries_workload_access_token(*, inject_param_name: str = "workload_access_token") -> Callable:
+def requires_workload_access_token(*, inject_param_name: str = "workload_access_token") -> Callable:
     """Decorator that fetches a workload access token before calling the decorated function.
 
     Args:
