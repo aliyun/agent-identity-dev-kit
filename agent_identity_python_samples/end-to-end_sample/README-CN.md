@@ -160,9 +160,11 @@ python -m prepare
 2. 选择"resourcecenter"官方MCP服务
 3. 用您创建的`${mcp_app_name}`替换默认的OAuth应用（该值在执行prepare之后会输出在".config.json"文件中）
 4. 使用您的MCP服务器可流式HTTP端点更新`config.yml`：
+5. 开启AI网关的权限能力的时候，需要额外配置MCP服务器，参考`tools/mcp/demo_apig_mcp`的实现以及`fetch-workload-access-token_sample/README-CN.md`，并在`main.py`中`register_mcp_and_invoke`函数中启用MCP
 
 ```yaml
 MCP_SERVER: "<your-mcp-server-endpoint>"
+DEMO_MCP_SERVER: "<your-demo-mcp-server-endpoint>"
 ```
 
 ![MCP配置](images/get_mcp_endpoint.png)
@@ -225,22 +227,6 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ### 启动前后端服务
 
 #### 代理服务部署在本地的情况
-检查前端服务配置文件，在当前根目录下创建`.config.json`文件，并配置以下内容：
-```json
-{
- "workload_identity_name":"your workload identity name",
- "inbound_app_id":"your login oauth native client id"
-}
-```
-检查后端服务配置
-在`backend`目录下的`app.yml`文件中配置以下内容：
-```yaml
-INBOUND_REDIRECT_URI: "your frontend redirect uri, e.g. http://localhost:8090"
-AGENT_FRAMEWORK: "agent framework: agentScope or agentRun"
-AGENT_BEARER_TOKEN: "your agent api access token. For local deployments, the accessToken configuration is not applicable."
-AGENT_ENDPOINT: "your agent api endpoint, e.g. http://localhost:8080/process depends on your agent deployment config"
-```
-
 在根目录下执行启动服务：
 ```bash
 python -m application.backend.app

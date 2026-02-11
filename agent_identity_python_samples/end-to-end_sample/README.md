@@ -159,10 +159,11 @@ This script performs the following operations:
 1. Navigate to [Alibaba Cloud MCP Server](https://api.aliyun.com/mcp/servers)
 2. Select the "resourcecenter" official MCP service
 3. Replace the default OAuth application with your created `${mcp_app_name}` (this value will be output in the ".config.json" file after executing prepare)
-4. Update `config.yml` with your MCP server streamable HTTP endpoint:
+5. When enabling permission capabilities on AI Gateway, additional MCP server configuration is required. Please refer to the implementation in `tools/mcp/demo_apig_mcp` and `fetch-workload-access-token_sample/README-CN.md`. Enable MCP config in function `register_mcp_and_invoke` in `main.py`.
 
 ```yaml
 MCP_SERVER: "<your-mcp-server-endpoint>"
+DEMO_MCP_SERVER: "<your-demo-mcp-server-endpoint>"
 ```
 
 ![MCP Configuration](images/get_mcp_endpoint.png)

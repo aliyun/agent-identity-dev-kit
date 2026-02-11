@@ -22,6 +22,7 @@ from .tools.ding_talk_tool import ding_talk_tool
 from .tools.get_current_time import get_current_time
 from .tools.get_schedule import get_schedule
 from .tools.mcp.aliyun_ram_mcp import register_aliyun_mcp
+from .tools.mcp.demo_apig_mcp import register_apig_mcp
 from .tools.read_oss_file import get_oss_object
 from .tools.weather_search import weather_search
 
@@ -51,11 +52,11 @@ identity_client = IdentityClient(region_id=get_region())
 
 user_token_map = {}
 
-@agent_app.endpoint("/", methods=["GET"])
+@agent_app.endpoint("/", methods=["GET","POST"])
 def read_root():
     return {"hi agentDev"}
 
-@agent_app.endpoint("/health", methods=["GET"])
+@agent_app.endpoint("/health", methods=["GET","POST"])
 def health_check():
     return "OK"
 
@@ -121,8 +122,12 @@ async def query_func(
         agents=[agent],
         coroutine_task=call_agent(agent, msgs),
     )
+
+    
+    # Register mcp and invoke agent, when enable ai gateway authorization
     async def register_mcp_and_invoke():
         await register_aliyun_mcp(toolkit=toolkit)
+        #await register_apig_mcp(toolkit=toolkit)
         await collect_from_stream(agent_stream, queue)
 
     asyncio.create_task(register_mcp_and_invoke())

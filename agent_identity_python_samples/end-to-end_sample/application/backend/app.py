@@ -235,14 +235,16 @@ async def forward_to_main_service(agent_request: AgentRequest):
                                     json_part = data_str[5:].strip()  # Remove "data:" prefix
                                     if json_part:
                                         data_obj = json.loads(json_part)
-                                        # Check for completion status object
-                                        if data_obj.get('status') == 'completed' and data_obj.get('type') == 'text' and 'message' in data_obj.get('object', ''):
+                                        # Check for completion status object - ensure data_obj is a dict
+                                        if isinstance(data_obj, dict) and data_obj.get('status') == 'completed' and data_obj.get('type') == 'text' and 'message' in data_obj.get('object', ''):
                                             logger.info("Detected completion message, ending stream")
                                             break
                             # If chunk is JSON itself (without data: prefix)
                             else:
                                 data_obj = json.loads(chunk.decode('utf-8'))
-                                if data_obj.get('status') == 'completed' and data_obj.get('type') == 'text' and 'message' in data_obj.get('object', ''):
+                                print(data_obj)
+                                # Check for completion status object - ensure data_obj is a dict
+                                if isinstance(data_obj, dict) and data_obj.get('status') == 'completed' and data_obj.get('type') == 'text' and 'message' in data_obj.get('object', ''):
                                     logger.info("Detected completion message, ending stream")
                                     break
                         except (json.JSONDecodeError, UnicodeDecodeError):
