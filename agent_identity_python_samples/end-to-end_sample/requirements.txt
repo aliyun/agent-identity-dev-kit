@@ -16,5 +16,5 @@ agentscope==1.0.8
 utils==1.0.2
 base58==2.1.1
 alibabacloud_ims20190815==3.3.3
-agent-identity-python-sdk>=0.1.1
+agent-identity-python-sdk>=0.1.4
 agent-identity-cli>=0.1.1
