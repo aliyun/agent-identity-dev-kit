@@ -207,7 +207,7 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export MODELSTUDIO_WORKSPACE_ID=<your-workspace-id>                 #可选，替换为百炼的业务空间ID，该空间将部署高代码应用，不设置将使用默认业务空间
 ```
 
-4. 使用CLI工具将打包出来的whl文件部署到百炼：
+4. 使用CLI工具将打包出来的whl文件部署到百炼(可选，或直接上传whl包)：
 ```bash
 runtime-fc-deploy --deploy-name agent-identity-sample  --whl-path <PATH_TO_YOUR_NEW_WHL_FILE> --telemetry enable
 ```
@@ -222,6 +222,8 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ![images/go_to_fc.png](images/go_to_fc.png)
 
 7. 在函数计算控制台上为高代码应用对应的函数计算实例创建并配置实例角色（需要选择"阿里云服务"，并且"受信服务"需要选择"函数计算"），为角色赋予`AliyunAgentIdentityDataFullAccess`系统策略。
+
+8. 检查函数启动命令`python3 -m deploy_starter.main`
 
 
 ### 启动前后端服务

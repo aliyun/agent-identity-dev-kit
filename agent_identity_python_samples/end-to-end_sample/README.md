@@ -206,7 +206,7 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export MODELSTUDIO_WORKSPACE_ID=<your-workspace-id>                 # Optional, replace with Bailian business space ID where the high-code application will be deployed, otherwise the default business space will be used
 ```
 
-4. Use the CLI tool to deploy the packaged whl file to Bailian:
+4. Use the CLI tool to deploy the packaged whl file to Bailian(Optional, or you can upload whl package in Bailian high-code application console):
 ```bash
 runtime-fc-deploy --deploy-name agent-identity-sample  --whl-path <PATH_TO_YOUR_NEW_WHL_FILE> --telemetry enable
 ```
@@ -222,6 +222,7 @@ export DASHSCOPE_API_KEY=<your-api-key>
 
 7. Create and configure an instance role for the Function Compute instance corresponding to the high-code application on the Function Compute console (need to select "Alibaba Cloud Services", and "Trusted Services" needs to select "Function Compute"), and assign the `AliyunAgentIdentityDataFullAccess` system policy to the role.
 
+8. check the function run commond: `python3 -m deploy_starter.main`
 ### Start Frontend and Backend Services
 
 #### When Agent Service is Deployed Locally
