@@ -159,10 +159,11 @@ This script performs the following operations:
 1. Navigate to [Alibaba Cloud MCP Server](https://api.aliyun.com/mcp/servers)
 2. Select the "resourcecenter" official MCP service
 3. Replace the default OAuth application with your created `${mcp_app_name}` (this value will be output in the ".config.json" file after executing prepare)
-4. Update `config.yml` with your MCP server streamable HTTP endpoint:
+5. When enabling permission capabilities on AI Gateway, additional MCP server configuration is required. Please refer to the implementation in `tools/mcp/demo_apig_mcp` and `fetch-workload-access-token_sample/README-CN.md`. Enable MCP config in function `register_mcp_and_invoke` in `main.py`.
 
 ```yaml
 MCP_SERVER: "<your-mcp-server-endpoint>"
+DEMO_MCP_SERVER: "<your-demo-mcp-server-endpoint>"
 ```
 
 ![MCP Configuration](images/get_mcp_endpoint.png)
@@ -205,7 +206,7 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export MODELSTUDIO_WORKSPACE_ID=<your-workspace-id>                 # Optional, replace with Bailian business space ID where the high-code application will be deployed, otherwise the default business space will be used
 ```
 
-4. Use the CLI tool to deploy the packaged whl file to Bailian:
+4. Use the CLI tool to deploy the packaged whl file to Bailian(Optional, or you can upload whl package in Bailian high-code application console):
 ```bash
 runtime-fc-deploy --deploy-name agent-identity-sample  --whl-path <PATH_TO_YOUR_NEW_WHL_FILE> --telemetry enable
 ```
@@ -221,6 +222,7 @@ export DASHSCOPE_API_KEY=<your-api-key>
 
 7. Create and configure an instance role for the Function Compute instance corresponding to the high-code application on the Function Compute console (need to select "Alibaba Cloud Services", and "Trusted Services" needs to select "Function Compute"), and assign the `AliyunAgentIdentityDataFullAccess` system policy to the role.
 
+8. check the function run commond: `python3 -m deploy_starter.main`
 ### Start Frontend and Backend Services
 
 #### When Agent Service is Deployed Locally

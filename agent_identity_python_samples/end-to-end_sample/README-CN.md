@@ -160,9 +160,11 @@ python -m prepare
 2. 选择"resourcecenter"官方MCP服务
 3. 用您创建的`${mcp_app_name}`替换默认的OAuth应用（该值在执行prepare之后会输出在".config.json"文件中）
 4. 使用您的MCP服务器可流式HTTP端点更新`config.yml`：
+5. 开启AI网关的权限能力的时候，需要额外配置MCP服务器，参考`tools/mcp/demo_apig_mcp`的实现以及`fetch-workload-access-token_sample/README-CN.md`，并在`main.py`中`register_mcp_and_invoke`函数中启用MCP
 
 ```yaml
 MCP_SERVER: "<your-mcp-server-endpoint>"
+DEMO_MCP_SERVER: "<your-demo-mcp-server-endpoint>"
 ```
 
 ![MCP配置](images/get_mcp_endpoint.png)
@@ -205,7 +207,7 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export MODELSTUDIO_WORKSPACE_ID=<your-workspace-id>                 #可选，替换为百炼的业务空间ID，该空间将部署高代码应用，不设置将使用默认业务空间
 ```
 
-4. 使用CLI工具将打包出来的whl文件部署到百炼：
+4. 使用CLI工具将打包出来的whl文件部署到百炼(可选，或直接上传whl包)：
 ```bash
 runtime-fc-deploy --deploy-name agent-identity-sample  --whl-path <PATH_TO_YOUR_NEW_WHL_FILE> --telemetry enable
 ```
@@ -220,6 +222,8 @@ export DASHSCOPE_API_KEY=<your-api-key>
 ![images/go_to_fc.png](images/go_to_fc.png)
 
 7. 在函数计算控制台上为高代码应用对应的函数计算实例创建并配置实例角色（需要选择"阿里云服务"，并且"受信服务"需要选择"函数计算"），为角色赋予`AliyunAgentIdentityDataFullAccess`系统策略。
+
+8. 检查函数启动命令`python3 -m deploy_starter.main`
 
 
 ### 启动前后端服务
