@@ -121,7 +121,7 @@ curl -N \
       {
         "role": "user",
         "content": [
-          { "type": "text", "text": "Help me call API Gateway interface XXX to get time" }
+          { "type": "text", "text": "Tell me the time in UTC" }
         ]
       }
     ],

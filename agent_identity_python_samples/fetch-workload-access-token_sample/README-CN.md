@@ -130,7 +130,7 @@ curl -N \
       {
         "role": "user",
         "content": [
-          { "type": "text", "text": "帮我调用API网关接口XXX获取时间" }
+          { "type": "text", "text": "查询当前的UTC时间" }
         ]
       }
     ],

@@ -124,7 +124,7 @@ async def query_func(
     )
 
     
-    # Register mcp and invoke agent, when enable ai gateway authorization
+    # Register mcp and invoke agent, when enable ai gateway authorization, add register_apig_mcp(toolkit=toolkit)
     async def register_mcp_and_invoke():
         await register_aliyun_mcp(toolkit=toolkit)
         #await register_apig_mcp(toolkit=toolkit)
