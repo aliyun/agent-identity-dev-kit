@@ -68,7 +68,7 @@ async def register_demo_mcp(toolkit: Toolkit, workload_accesstoken: str):
         transport="sse",
         url=os.getenv("AI_GATEWAY_MCP_SERVER", ""),
         headers={
-            "Authorization": workload_accesstoken,
+            "Authorization": "bearer " + workload_accesstoken,
         },
     )
     await toolkit.register_mcp_client(stateless_client)
