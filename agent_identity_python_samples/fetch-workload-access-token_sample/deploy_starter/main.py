@@ -11,6 +11,7 @@ from agentscope.formatter import DashScopeChatFormatter
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope.tool import ToolResponse
+from exceptiongroup import ExceptionGroup
 from agentscope_runtime.adapters.agentscope.memory import AgentScopeSessionHistoryMemory
 from agentscope_runtime.engine.services.agent_state import InMemoryStateService
 from agentscope_runtime.engine.services.session_history import InMemorySessionHistoryService
@@ -53,6 +54,37 @@ def health_check():
     return "OK"
 
 
+def _unwrap_exception(exc: BaseException) -> Exception:
+    """Unwrap ExceptionGroup to extract the real cause (e.g. HTTPStatusError)."""
+    if isinstance(exc, ExceptionGroup):
+        for sub in exc.exceptions:
+            unwrapped = _unwrap_exception(sub)
+            if unwrapped is not sub:
+                return unwrapped
+        if exc.exceptions:
+            return exc.exceptions[0]
+    return exc
+
+
+def _wrap_mcp_tool_with_error_handling(toolkit: Toolkit):
+    """Wrap MCP tool functions in the toolkit so that ExceptionGroup errors
+    are unwrapped into plain Exception, allowing Toolkit.call_tool_function
+    to catch them and pass the error message to the LLM."""
+    for func_name, tool_func in toolkit.tools.items():
+        original_func = tool_func.original_func
+        owner = getattr(original_func, '__self__', original_func)
+        if owner.__class__.__name__ == 'MCPToolFunction':
+
+            async def _wrapped_call(__orig=original_func, **kwargs):
+                try:
+                    return await __orig(**kwargs)
+                except BaseException as e:
+                    raise _unwrap_exception(e) from e
+
+            _wrapped_call.original_func = original_func
+            tool_func.original_func = _wrapped_call
+
+
 @requires_workload_access_token(
     inject_param_name="workload_accesstoken",
 )
@@ -62,16 +94,17 @@ async def register_demo_mcp(toolkit: Toolkit, workload_accesstoken: str):
     """
     if not workload_accesstoken:
         raise Exception("Workload access token is required")
-    
+
     stateless_client: HttpStatelessClient = HttpStatelessClient(
         name="mcp_services_stateless",
-        transport="sse",
+        transport="streamable_http",
         url=os.getenv("AI_GATEWAY_MCP_SERVER", ""),
         headers={
-            "Authorization": workload_accesstoken,
+            "Authorization": "Bearer " + workload_accesstoken,
         },
     )
     await toolkit.register_mcp_client(stateless_client)
+    _wrap_mcp_tool_with_error_handling(toolkit)
 
 @agent_app.query(framework="agentscope")
 async def query_func(
