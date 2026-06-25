@@ -260,7 +260,7 @@ class IdentityClient:
                 request.session_uri = response_body.session_uri
 
             if poll_for_token:
-                return await self.poll_for_oauth2_token(request)
+                return await self.poll_for_oauth2_token(request, credential=credential)
             else:
                 raise RuntimeError("Agent Identity service returned an authorization URL, authorization flow needs to be completed.")
 
@@ -365,24 +365,34 @@ class IdentityClient:
         )
 
 
-    async def poll_for_oauth2_token(self, request: GetResourceOAuth2TokenRequest, max_retries: int = 20, delay_sec: float = 3.0) -> str:
+    async def poll_for_oauth2_token(self, request: GetResourceOAuth2TokenRequest, max_retries: int = 20, delay_sec: float = 3.0, credential: Optional[CredentialClient] = None) -> str:
 
         """
         Poll the GetResourceOAuth2Token endpoint until a token is obtained or maximum retries are reached
-        
+
         Args:
             request: GetResourceOAuth2TokenRequest object
 
             max_retries: Maximum number of retry attempts
 
             delay_sec: Delay in seconds between each retry
-            
+
+            credential: Optional credential for fetching the token. Used when use_sts is enabled.
+
         Returns:
             Returns the access token on success, throws an exception on failure
         """
+        client = self.data_client
+        if self.use_sts:
+            client = DataClient(config=open_api_models.Config(
+                credential=credential,
+                region_id=self.region_id,
+                endpoint=self.data_api_endpoint or f"agentidentitydata.{self.region_id}.aliyuncs.com"
+            ))
+
         for attempt in range(max_retries):
             try:
-                response = self.data_client.get_resource_oauth2_token(request)
+                response = client.get_resource_oauth2_token(request)
                 access_token = response.body.access_token
 
                 if access_token:
