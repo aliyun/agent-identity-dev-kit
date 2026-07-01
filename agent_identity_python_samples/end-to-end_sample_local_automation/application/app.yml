@@ -1,0 +1,3 @@
+INBOUND_REDIRECT_URI: "http://localhost:8090"
+AGENT_BEARER_TOKEN: "MOCK"
+AGENT_ENDPOINT: "http://localhost:8080/process"
