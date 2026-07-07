@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 REGION = get_region()
 OAUTH_REDIRECT_URI_FOR_CONFIRM = f"{get_config_with_default('APP_REDIRECT_URI', 'http://localhost:8090')}/callback"
 OAUTH_REDIRECT_URI_FOR_INBOUND = get_app_config_with_default('INBOUND_REDIRECT_URI', 'http://localhost:8090')
+DASHSCOPE_API_KEY = get_app_config_with_default('DASHSCOPE_API_KEY', 'mock')
 
 # Inbound configuration
 INBOUND_APP_NAME = f'aliyun-inbound-{uuid.uuid4()}'
@@ -171,7 +172,7 @@ def create_api_key_provider() -> str:
             CreateAPIKeyCredentialProviderRequest(
                 apikey_credential_provider_name=API_KEY_CREDENTIAL_PROVIDER_NAME,
                 description='This is a test API key provider.',
-                apikey="12345678"
+                apikey=DASHSCOPE_API_KEY
             )
         )
         logger.info(f'API key credential provider: {response.body.apikey_credential_provider.apikey_credential_provider_name} created.')
@@ -182,6 +183,36 @@ def create_api_key_provider() -> str:
             return API_KEY_CREDENTIAL_PROVIDER_NAME
         else:
             raise
+
+
+def create_m2m_provider():
+    """Create DingTalk M2M Provider (oauthType=M2M)."""
+    m2m_provider_name = "dingtalk-m2m-sample"
+    dingtalk_corp_id = os.getenv("DINGTALK_CORP_ID")
+    try:
+        response = client.control_client.create_oauth2_credential_provider(
+            request=CreateOAuth2CredentialProviderRequest(
+                oauth2_credential_provider_name=m2m_provider_name,
+                credential_provider_vendor="DingTalkOAuth2",
+                oauth2_provider_config=OAuth2ProviderConfig(
+                    included_oauth2_provider_config=IncludedOAuth2ProviderConfig(
+                        client_id=os.getenv("DINGTALK_APP_KEY"),
+                        client_secret=os.getenv("DINGTALK_APP_SECRET"),
+                        token_endpoint=f"https://api.dingtalk.com/v1.0/oauth2/{dingtalk_corp_id}/token",
+                    )
+                ),
+                description="DingTalk M2M Provider for work notification sample",
+                oauth_type="M2M",
+            )
+        )
+        logger.info(f"M2M Provider created: {m2m_provider_name}")
+    except ClientException as error:
+        if error.code == "EntityAlreadyExists.OAuth2CredentialProvider":
+            logger.warning("[409] M2M Provider already exists, skip.")
+        else:
+            raise
+    write_local_config("m2m_provider_name", m2m_provider_name)
+    return m2m_provider_name
 
 
 if __name__ == '__main__':
@@ -203,8 +234,24 @@ if __name__ == '__main__':
 
     identity_provider_name = create_identity_provider(inbound_app_id)
     workload_identity_name, role_arn = create_role_and_workload_identity(OAUTH_REDIRECT_URI_FOR_CONFIRM)
-    oauth_credential_provider_name = create_oauth2_credential_provider(app_id=mcp_app_id, callback_url=mcp_callback_url)
-    api_key_provider_name = create_api_key_provider()
+
+    # UF Provider and API Key Provider creation may fail if resources already exist
+    # Wrap in try/except so M2M provider creation can still proceed
+    oauth_credential_provider_name = None
+    api_key_provider_name = None
+    m2m_provider_name = None
+    try:
+        oauth_credential_provider_name = create_oauth2_credential_provider(app_id=mcp_app_id, callback_url=mcp_callback_url)
+    except Exception as e:
+        logger.warning(f"UF OAuth2 provider creation failed (non-fatal): {e}")
+    try:
+        api_key_provider_name = create_api_key_provider()
+    except Exception as e:
+        logger.warning(f"API Key provider creation failed (non-fatal): {e}")
+    try:
+        m2m_provider_name = create_m2m_provider()
+    except Exception as e:
+        logger.warning(f"M2M provider creation failed (non-fatal): {e}")
 
     # Output structured JSON summary
 
@@ -238,7 +285,8 @@ if __name__ == '__main__':
         },
         "credential_providers": {
             "oauth2": oauth_credential_provider_name,
-            "api_key": api_key_provider_name
+            "api_key": api_key_provider_name,
+            "m2m": m2m_provider_name
         }
     }
     logger.info(json.dumps(summary, indent=2, ensure_ascii=False))

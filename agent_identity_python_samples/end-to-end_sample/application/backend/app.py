@@ -209,7 +209,7 @@ async def forward_to_main_service(agent_request: AgentRequest):
             headers.setdefault("X-app-custom-session-id", agent_request.session_id)
         else:
             # Keep original behavior for other configurations
-            headers.setdefault("Authorization", f"Bearer {get_app_config_with_default("AGENT_BEARER_TOKEN", "MOCK")}")
+            headers.setdefault("Authorization", f"Bearer {get_app_config_with_default('AGENT_BEARER_TOKEN', 'MOCK')}")
         # Send POST request to main service
         async with httpx.AsyncClient(timeout=180.0) as client:
             async with client.stream(

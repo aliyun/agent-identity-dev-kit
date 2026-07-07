@@ -1,11 +1,17 @@
 # Agent Identity Python SDK Sample
 
-A complete demonstration of the Agent Identity Python SDK for building secure, identity-aware AI agents.
+A complete demonstration of the Agent Identity Python SDK for building secure, identity-aware AI agents. Supports both UF (User-present) and M2M (Machine-to-Machine) credential acquisition modes.
 
 ## 🚀 Overview
 
 This sample demonstrates how to build an LLM Agent service based on the [AgentScope](https://github.com/alibaba/agentscope) runtime framework, integrated with the Agent Identity SDK.
 It includes Inbound authentication, Outbound credential acquisition and tool invocation, session management, user identity management, cloud credential acquisition, MCP integration, and other functions. The deployment structure consists of three modules: AI Agent service, frontend application, and backend application.
+
+This sample demonstrates two credential acquisition modes:
+- **UF (User-present) mode**: After user login, the Agent obtains credentials on behalf of the user and invokes tools. For example: user asks the Agent via chat to query ECS instances, read OSS files, or write DingTalk documents.
+- **M2M (Machine-to-Machine) mode**: No user login required. External systems trigger the Agent via API, and the Agent autonomously executes tasks using machine identity credentials. For example: CI/CD system triggers the Agent to send DingTalk work notifications.
+
+Both modes share the same Agent pipeline (natural language input → LLM analysis → tool decision → credential injection → execution). The difference lies only in the trigger source and credential origin.
 
 The frontend and backend applications constitute a complete inbound application that integrates Alibaba Cloud OAuth2.0 authentication flow, allowing browser-based authentication and retrieval of Alibaba Cloud ID Tokens. After obtaining credentials, the frontend can interact with the Agent through the backend application, using Agent Identity's credential hosting capabilities for tool usage.
 
@@ -21,6 +27,7 @@ Key features include:
   - Getting system time (simulated: OAuth2 token)
   - Simulating weather retrieval (simulated: API Key)
   - Simulating today's schedule retrieval (simulated: STS Token)
+- M2M mode: External systems trigger the Agent via `/process`, and the Agent uses machine credentials to automatically obtain DingTalk M2M tokens and send work notifications
 
 ## 🏗️ Architecture
 ![framework.png](images/framework.png)
@@ -87,6 +94,25 @@ Create a RAM sub-account with the following permissions:
 #### 2. DashScope API Key
 Obtain a [DashScope API key](https://bailian.console.aliyun.com/?tab=model#/api-key) with model calling permissions.
 
+#### 3. DingTalk Enterprise Internal Application (Required for M2M Mode)
+
+To send DingTalk work notifications in M2M mode, you need to create an enterprise internal application on the DingTalk Open Platform:
+
+1. Log in to the [DingTalk Developer Console](https://open-dev.dingtalk.com/)
+2. Go to **App Development** → **Enterprise Internal Development** → **Create Application**
+3. Fill in the application name and description, create an H5 micro-application
+4. On the **Basic Information** page, record the following three values:
+   - **AppKey** (i.e., client_id)
+   - **AppSecret** (i.e., client_secret)
+   - **AgentId** (application ID, numeric type)
+5. On the **Permission Management** page, search and add the following permissions:
+   - `Enterprise robot message sending` (for sending work notifications)
+   - `Contact personal info read permission` (for querying user IDs)
+6. On the **Development Management** page, fill in **Server Outbound IP** (you can fill `*` for no restrictions)
+7. On the **Version Management & Release** page, create a version and publish the application
+
+> **Note**: Permissions only take effect after the application is published. If permissions are granted but the API returns 403, check whether the latest version has been published.
+
 ## 📦 Installation
 
 ### 1. Clone Repository
@@ -111,6 +137,11 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=<your-access-key-secret>
 export AGENT_IDENTITY_REGION_ID=cn-beijing # Currently, Agent Identity is only available in Beijing region
 # DashScope API
 export DASHSCOPE_API_KEY=<your-api-key>
+# M2M (DingTalk Work Notification)
+export DINGTALK_APP_KEY=<your-dingtalk-app-key>
+export DINGTALK_APP_SECRET=<your-dingtalk-app-secret>
+export DINGTALK_AGENT_ID=<your-dingtalk-agent-id>
+export DINGTALK_CORP_ID=<your-dingtalk-corp-id>
 ```
 
 ## 🔧 Resource Initialization
@@ -143,6 +174,7 @@ This script performs the following operations:
 5. **Configure Credential Providers**
    - OAuth2 provider for MCP server integration/system time retrieval
    - API key provider for weather tools
+   - M2M credential provider for DingTalk work notifications (provider name: `dingtalk-m2m-sample`, vendor: `DingTalkOAuth2`, oauthType: `M2M`)
 
 > **Note**: The script outputs created resource information to .config.json in the root directory, which contains "mcp_app_name" for subsequent use.
 
@@ -274,14 +306,15 @@ python -m application.backend.app
 
 #### Tool Function Summary
 
-| Command | Function | Credential Type |
-|--------|----------|-----------------|
-| Query today's weather | Weather API query | API Key |
-| Query today's schedule | Calendar/Schedule access | STS Token |
-| Query current system time | System time retrieval | OAuth Token |
-| Call Alibaba Cloud MCP service to query all ECS instances | Alibaba Cloud resource query | OAuth Token |
-| Read Alibaba Cloud OSS files | OSS file query | STS Token |
-| Read files from DingTalk documents | DingTalk document reading | OAuth Token |
+| Command | Function | Credential Type | Mode |
+|--------|----------|-----------------|------|
+| Query today's weather | Weather API query | API Key | UF |
+| Query today's schedule | Calendar/Schedule access | STS Token | UF |
+| Query current system time | System time retrieval | OAuth Token | UF |
+| Call Alibaba Cloud MCP service to query all ECS instances | Alibaba Cloud resource query | OAuth Token | UF |
+| Read Alibaba Cloud OSS files | OSS file query | STS Token | UF |
+| Read files from DingTalk documents | DingTalk document reading | OAuth Token | UF |
+| Send DingTalk work notification | DingTalk M2M notification | M2M Token | M2M |
 
 #### Acquiring User Identity Tokens
 
@@ -291,15 +324,58 @@ Navigate to the frontend page (http://localhost:8090) and click the "Login" butt
 
 After completing OAuth authorization, you can interact with the Agent through the chat box on the frontend page.
 
-### Example Prompts
+### Testing
 
-Here are some simple examples that can be used to test different tool functionalities:
+This sample supports two testing modes. UF mode interacts through the frontend chat box (login required), M2M mode is triggered via API call (no login required). Both modes share the same Agent workflow: receive natural language → LLM analyzes intent → invoke tool → return result.
+
+#### UF Mode (User-present)
+
+1. Open the frontend page (http://localhost:8090), click "Login" to complete Alibaba Cloud OAuth authorization
+2. Type instructions in the chat box, the Agent will automatically select the appropriate tool based on intent
+
+Example prompts:
 
 - "How is the weather today?" - Testing weather API (API key authentication)
 - "What is my schedule for today?" - Testing calendar/schedule tool (STS token authentication)
 - "What time is it now?" - Testing system time retrieval (OAuth token authentication)
 - "Help me query my ECS instance list" - Testing Alibaba Cloud MCP service (OAuth token authentication)
 - "Read my OSS file" - Testing OSS file query (STS token authentication)
+
+#### M2M Mode (Machine-to-Machine)
+
+M2M mode simulates an external system (e.g., CI/CD) triggering the Agent via API, without user login. Send natural language instructions to the `/process` endpoint via curl, and the Agent will automatically analyze the intent and invoke M2M tools.
+
+> The `input` field in curl is the same text you would type in the chat box, just wrapped in JSON format. UF uses the chat box, M2M uses curl — the difference is only in how the Agent is triggered.
+
+**Prerequisite: Get DingTalk User ID**
+
+Sending work notifications requires DingTalk user IDs (not phone numbers or employee IDs). You can obtain them by:
+1. DingTalk Admin Console → Contacts → Click member → View User ID
+2. Or via DingTalk API `topapi/v2/user/getbymobile` using phone number
+
+**Example Call**
+
+Replace `<your-dingtalk-user-id>` with the actual value, then run in terminal:
+
+```bash
+curl -X POST "http://localhost:8080/process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "m2m-demo",
+    "user_id": "m2m-demo",
+    "input": [
+      {
+        "role": "user",
+        "type": "message",
+        "content": [{"type": "text", "text": "Send a DingTalk notification to user <your-dingtalk-user-id> to submit their daily report"}]
+      }
+    ]
+  }'
+```
+
+After receiving the instruction, the LLM will extract the user ID and message content, then automatically invoke the DingTalk work notification tool. The target employee will receive a work notification in their DingTalk app.
+
+> **Note**: M2M requests do not carry user identity information. The Agent uses machine identity to obtain credentials. In production environments, add authentication protection to the `/process` endpoint.
 
 ## 🤝 Support
 

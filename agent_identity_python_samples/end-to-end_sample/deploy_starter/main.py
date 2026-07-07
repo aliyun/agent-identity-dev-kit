@@ -14,6 +14,7 @@ from agentscope_runtime.engine import AgentApp
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from agentscope.model import DashScopeChatModel
 
+from agent_identity_python_sdk import requires_api_key
 from .tools.context.config import get_config_with_default
 from .tools.context.context import AgentContext
 from agent_identity_python_sdk import AgentIdentityContext
@@ -25,6 +26,7 @@ from .tools.mcp.aliyun_ram_mcp import register_aliyun_mcp
 from .tools.mcp.demo_apig_mcp import register_apig_mcp
 from .tools.read_oss_file import get_oss_object
 from .tools.weather_search import weather_search
+from .tools.send_dingtalk_notification import send_dingtalk_notification
 
 agent_app = AgentApp(
     app_name="Friday",
@@ -68,6 +70,12 @@ async def collect_from_stream(stream, queue):
     except StopAsyncIteration:
         pass
 
+@requires_api_key(
+    credential_provider_name='test-provider-api-key'
+)
+async def get_api_key(api_key: str):
+    return api_key
+
 @agent_app.query(framework="agentscope")
 async def query_func(
     self,
@@ -77,10 +85,19 @@ async def query_func(
 ):
     session_id = request.session_id
     user_id = request.user_id
+    id_token = getattr(request, 'id_token', None)
 
-    AgentIdentityContext.set_user_id(user_id)
-    AgentIdentityContext.set_user_token(user_id)
-    AgentIdentityContext.set_custom_state(session_id)
+    # Backend sends JWT as user_id field (legacy compatibility).
+    # If user_id looks like a JWT (3 parts separated by '.'), treat it as id_token.
+    if not id_token and user_id and isinstance(user_id, str) and user_id.count('.') == 2:
+        id_token = user_id
+
+    # Only set user context for UF requests (when user identity is present).
+    # M2M requests have no id_token — use id_token as indicator since user_id may default to session_id.
+    if id_token:
+        AgentIdentityContext.set_user_id(user_id)
+        AgentIdentityContext.set_user_token(id_token)
+        AgentIdentityContext.set_custom_state(session_id)
 
     state = await self.state_service.export_state(
         session_id=session_id,
@@ -92,17 +109,23 @@ async def query_func(
     queue = asyncio.Queue()
     AgentContext.queue_context.set(queue)
 
-    toolkit.register_tool_function(weather_search)
-    toolkit.register_tool_function(get_current_time)
-    toolkit.register_tool_function(get_schedule)
-    toolkit.register_tool_function(get_oss_object)
-    toolkit.register_tool_function(ding_talk_tool)
+    if id_token:
+        # UF mode: all tools require user identity
+        toolkit.register_tool_function(weather_search)
+        toolkit.register_tool_function(get_current_time)
+        toolkit.register_tool_function(get_schedule)
+        toolkit.register_tool_function(get_oss_object)
+        toolkit.register_tool_function(ding_talk_tool)
+    else:
+        # M2M mode: only DingTalk work notification (no user interaction)
+        toolkit.register_tool_function(send_dingtalk_notification)
 
+    api_key = await get_api_key()
     agent = ReActAgent(
         name="Friday",
         model=DashScopeChatModel(
             model_name=get_config_with_default("DASHSCOPE_MODEL_NAME", "qwen3-max"),
-            api_key=get_config_with_default("DASHSCOPE_API_KEY", ""),
+            api_key=api_key,
             stream=True,
         ),
         sys_prompt="You're a helpful assistant named Friday.",
@@ -126,8 +149,11 @@ async def query_func(
     
     # Register mcp and invoke agent, when enable ai gateway authorization, add register_apig_mcp(toolkit=toolkit)
     async def register_mcp_and_invoke():
-        await register_aliyun_mcp(toolkit=toolkit)
-        #await register_apig_mcp(toolkit=toolkit)
+        # MCP tools require user authorization (UF flow), skip for M2M requests
+        # Use id_token as indicator: UF has JWT, M2M doesn't (user_id may default to session_id)
+        if id_token:
+            await register_aliyun_mcp(toolkit=toolkit)
+            await register_apig_mcp(toolkit=toolkit)
         await collect_from_stream(agent_stream, queue)
 
     asyncio.create_task(register_mcp_and_invoke())

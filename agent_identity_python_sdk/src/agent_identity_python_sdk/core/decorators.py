@@ -30,7 +30,7 @@ def requires_access_token(
     inject_param_name: str = "access_token",
     scopes: Optional[List[str]] = None,
     on_auth_url: Optional[Callable[[str], Any]] = None,
-    auth_flow: Literal["USER_FEDERATION"] = "USER_FEDERATION",
+    auth_flow: Optional[Literal["USER_FEDERATION", "M2M"]] = None,
     callback_url: Optional[str] = None,
     force_authentication: bool = False,
     custom_parameters: Optional[Dict[str, str]] = None,
@@ -48,7 +48,7 @@ def requires_access_token(
 
         on_auth_url: Callback function for handling authorization URLs when they are obtained
 
-        auth_flow: Authentication flow type ("USER_FEDERATION")
+        auth_flow: Authentication flow type ("USER_FEDERATION" or "M2M"). None means auto-detect based on Provider type. M2M uses client_credentials grant, no user interaction required.
 
         callback_url: OAuth2 callback URL
 
@@ -68,27 +68,45 @@ def requires_access_token(
         client = IdentityClient(get_region())
 
         async def _get_token() -> str:
-            user_id = AgentIdentityContext.get_user_id()
-            id_token = AgentIdentityContext.get_user_token()
-            state = AgentIdentityContext.get_custom_state()
+            if auth_flow == "M2M":
+                # M2M path: no user context, no UF-specific parameters
+                workload_access_token = await _get_workload_access_token(
+                    client, user_id=None, id_token=None)
+                credential_client = await client.get_sts_credential_client(
+                    workload_token=workload_access_token,
+                    user_id=None, user_token=None)
+                return await client.get_token(
+                    credential_provider_name=credential_provider_name,
+                    workload_identity_token=workload_access_token,
+                    scopes=scopes,
+                    auth_flow=auth_flow,
+                    custom_parameters=custom_parameters,
+                    credential=credential_client,
+                    poll_for_token=False,
+                )
+            else:
+                # UF path: existing logic unchanged
+                user_id = AgentIdentityContext.get_user_id()
+                id_token = AgentIdentityContext.get_user_token()
+                state = AgentIdentityContext.get_custom_state()
 
-            workload_access_token = await _get_workload_access_token(client, user_id=user_id, id_token=id_token)
-            credential_client = await client.get_sts_credential_client(workload_token=workload_access_token,
-                                                                       user_id=user_id, user_token=id_token)
+                workload_access_token = await _get_workload_access_token(client, user_id=user_id, id_token=id_token)
+                credential_client = await client.get_sts_credential_client(workload_token=workload_access_token,
+                                                                           user_id=user_id, user_token=id_token)
 
-            return await client.get_token(
-                credential_provider_name=credential_provider_name,
-                workload_identity_token=workload_access_token,
-                scopes=scopes,
-                on_auth_url=on_auth_url,
-                auth_flow=auth_flow,
-                callback_url=callback_url,
-                force_authentication=force_authentication,
-                custom_state=state,
-                custom_parameters=custom_parameters,
-                credential=credential_client,
-                poll_for_token=poll_for_token
-            )
+                return await client.get_token(
+                    credential_provider_name=credential_provider_name,
+                    workload_identity_token=workload_access_token,
+                    scopes=scopes,
+                    on_auth_url=on_auth_url,
+                    auth_flow=auth_flow,
+                    callback_url=callback_url,
+                    force_authentication=force_authentication,
+                    custom_state=state,
+                    custom_parameters=custom_parameters,
+                    credential=credential_client,
+                    poll_for_token=poll_for_token
+                )
 
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs_func: Any) -> Any:
@@ -299,6 +317,12 @@ async def _get_workload_access_token_local(client: IdentityClient, user_id: Opti
 async def _get_workload_access_token(client: IdentityClient,
         user_id: Optional[str] = None,
         id_token: Optional[str] = None) -> str:
+    # Defensive: if id_token is not a valid JWT (3 parts separated by '.'),
+    # ignore it to avoid InvalidParameter.JsonWebToken error from data plane API
+    if id_token and (not isinstance(id_token, str) or id_token.count('.') != 2):
+        logger.warning("id_token is not a valid JWT format, ignoring: %s", id_token[:20] if isinstance(id_token, str) else type(id_token))
+        id_token = None
+
     token = AgentIdentityContext.get_workload_access_token()
     if token is not None:
         return token

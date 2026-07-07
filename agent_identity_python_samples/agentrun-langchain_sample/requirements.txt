@@ -4,3 +4,5 @@ alibabacloud-agentidentitydata20251127>=1.0.2
 agent-identity-cli>=0.1.1
 agent-identity-python-sdk>=0.1.1
 alibabacloud-oss-v2
+exceptiongroup>=1.1.0
+a2a-sdk==0.3.26
