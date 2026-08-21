@@ -10,7 +10,7 @@ from agent_identity_python_sdk.utils.config import write_local_config
 from alibabacloud_agentidentity20250901.models import (
     CreateIdentityProviderRequest,
     OAuth2ProviderConfig, IncludedOAuth2ProviderConfig, CreateOAuth2CredentialProviderRequest,
-    CreateAPIKeyCredentialProviderRequest,
+    CreateAPIKeyCredentialProviderRequest, UpdateAPIKeyCredentialProviderRequest,
 )
 
 from alibabacloud_ims20190815.client import Client as ImsClient
@@ -179,7 +179,16 @@ def create_api_key_provider() -> str:
         return response.body.apikey_credential_provider.apikey_credential_provider_name
     except ClientException as error:
         if error.code == 'EntityAlreadyExists.APIKeyCredentialProvider':
-            logger.warning('[409] APIKeyCredentialProvider already exists, skip creating.')
+            # Provider exists (may hold a stale apikey from an old prepare run),
+            # refresh it so re-running prepare always syncs the latest key.
+            logger.warning('[409] APIKeyCredentialProvider already exists, updating apikey.')
+            client.control_client.update_apikey_credential_provider(
+                UpdateAPIKeyCredentialProviderRequest(
+                    apikey_credential_provider_name=API_KEY_CREDENTIAL_PROVIDER_NAME,
+                    apikey=DASHSCOPE_API_KEY,
+                )
+            )
+            logger.info(f'API key credential provider: {API_KEY_CREDENTIAL_PROVIDER_NAME} updated.')
             return API_KEY_CREDENTIAL_PROVIDER_NAME
         else:
             raise
@@ -188,7 +197,13 @@ def create_api_key_provider() -> str:
 def create_m2m_provider():
     """Create DingTalk M2M Provider (oauthType=M2M)."""
     m2m_provider_name = "dingtalk-m2m-sample"
+    dingtalk_app_key = os.getenv("DINGTALK_APP_KEY")
+    dingtalk_app_secret = os.getenv("DINGTALK_APP_SECRET")
     dingtalk_corp_id = os.getenv("DINGTALK_CORP_ID")
+    if not (dingtalk_app_key and dingtalk_app_secret and dingtalk_corp_id):
+        raise ValueError(
+            "DINGTALK_APP_KEY, DINGTALK_APP_SECRET and DINGTALK_CORP_ID "
+            "environment variables are required to create the M2M provider")
     try:
         response = client.control_client.create_oauth2_credential_provider(
             request=CreateOAuth2CredentialProviderRequest(
@@ -196,8 +211,8 @@ def create_m2m_provider():
                 credential_provider_vendor="DingTalkOAuth2",
                 oauth2_provider_config=OAuth2ProviderConfig(
                     included_oauth2_provider_config=IncludedOAuth2ProviderConfig(
-                        client_id=os.getenv("DINGTALK_APP_KEY"),
-                        client_secret=os.getenv("DINGTALK_APP_SECRET"),
+                        client_id=dingtalk_app_key,
+                        client_secret=dingtalk_app_secret,
                         token_endpoint=f"https://api.dingtalk.com/v1.0/oauth2/{dingtalk_corp_id}/token",
                     )
                 ),

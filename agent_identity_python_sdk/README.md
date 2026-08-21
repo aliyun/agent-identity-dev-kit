@@ -58,6 +58,28 @@ def my_function(access_token: str):
 my_function()
 ```
 
+### Using Decorators to Obtain M2M Tokens
+
+For machine-to-machine scenarios (no user login), create an M2M credential provider first, then set `auth_flow="M2M"`:
+
+```python
+from agent_identity_python_sdk.core import requires_access_token
+
+@requires_access_token(
+    credential_provider_name="your-m2m-provider-name",
+    inject_param_name="access_token",
+    auth_flow="M2M",
+)
+def my_function(access_token: str):
+    # Use the M2M access token here
+    print(f"Access token: {access_token}")
+
+# Call the function
+my_function()
+```
+
+M2M uses the client_credentials grant: no user context is required, and no authorization URL will be returned. See `agent_identity_python_samples/end-to-end_sample` for a complete M2M example (DingTalk work notification).
+
 ### Using Decorators to Obtain API Keys
 
 ```python

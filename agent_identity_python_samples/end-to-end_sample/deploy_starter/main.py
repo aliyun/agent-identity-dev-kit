@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from agent_identity_python_sdk.core import IdentityClient
 from agent_identity_python_sdk.core.decorators import get_region
@@ -27,6 +28,8 @@ from .tools.mcp.demo_apig_mcp import register_apig_mcp
 from .tools.read_oss_file import get_oss_object
 from .tools.weather_search import weather_search
 from .tools.send_dingtalk_notification import send_dingtalk_notification
+
+logger = logging.getLogger(__name__)
 
 agent_app = AgentApp(
     app_name="Friday",
@@ -146,14 +149,20 @@ async def query_func(
         coroutine_task=call_agent(agent, msgs),
     )
 
-    
-    # Register mcp and invoke agent, when enable ai gateway authorization, add register_apig_mcp(toolkit=toolkit)
+    # Register MCP tools for UF requests, then stream agent output to queue.
+    # APIG MCP (AI gateway) is opt-in via DEMO_MCP_SERVER config; failures degrade gracefully.
     async def register_mcp_and_invoke():
         # MCP tools require user authorization (UF flow), skip for M2M requests
         # Use id_token as indicator: UF has JWT, M2M doesn't (user_id may default to session_id)
         if id_token:
-            await register_aliyun_mcp(toolkit=toolkit)
-            await register_apig_mcp(toolkit=toolkit)
+            demo_mcp = get_config_with_default('DEMO_MCP_SERVER', '')
+            try:
+                await register_aliyun_mcp(toolkit=toolkit)
+                # APIG MCP is optional, only register when configured
+                if demo_mcp and not demo_mcp.startswith('<'):
+                    await register_apig_mcp(toolkit=toolkit)
+            except Exception:
+                logger.exception("MCP registration failed, continuing without MCP tools")
         await collect_from_stream(agent_stream, queue)
 
     asyncio.create_task(register_mcp_and_invoke())

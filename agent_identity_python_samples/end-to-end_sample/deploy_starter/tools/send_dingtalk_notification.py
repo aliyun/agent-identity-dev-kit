@@ -35,7 +35,12 @@ async def send_dingtalk_notification(
         return ToolResponse(
             content=[TextBlock(type="text", text="DINGTALK_AGENT_ID environment variable is not set")],
         )
-    agent_id = int(agent_id_str)
+    try:
+        agent_id = int(agent_id_str)
+    except ValueError:
+        return ToolResponse(
+            content=[TextBlock(type="text", text=f"DINGTALK_AGENT_ID is not a valid number: {agent_id_str}")],
+        )
     url = f"https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token={access_token}"
     headers = {
         "Content-Type": "application/json",

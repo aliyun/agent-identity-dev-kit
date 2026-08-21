@@ -213,6 +213,45 @@ class TestRequiresAccessToken:
                         assert result == "Token: access-token"
                         mock_executor.return_value.__enter__.return_value.submit.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_requires_access_token_m2m_flow(self):
+        """Test requires_access_token with auth_flow='M2M': no user context, no UF-specific parameters."""
+        # Setup mocks
+        mock_identity_client = Mock()
+        mock_identity_client.get_token = AsyncMock(return_value="access-token")
+        mock_identity_client.get_sts_credential_client = AsyncMock(return_value=Mock())
+
+        with patch('agent_identity_python_sdk.core.decorators.IdentityClient') as mock_client_class:
+            mock_client_class.return_value = mock_identity_client
+
+            with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token') as mock_get_token:
+                mock_get_token.return_value = "workload-token"
+
+                @requires_access_token(
+                    credential_provider_name="test-provider",
+                    inject_param_name="access_token",
+                    auth_flow="M2M"
+                )
+                async def sample_m2m_function(access_token):
+                    return f"Token: {access_token}"
+
+                # Execute
+                result = await sample_m2m_function()
+
+                # Verify
+                assert result == "Token: access-token"
+                # M2M path must not read user context
+                mock_get_token.assert_called_once_with(
+                    mock_identity_client, user_id=None, id_token=None)
+                # get_token must carry M2M flow without UF-specific parameters
+                call_args = mock_identity_client.get_token.call_args
+                assert call_args.kwargs['auth_flow'] == "M2M"
+                assert call_args.kwargs['poll_for_token'] is False
+                assert 'on_auth_url' not in call_args.kwargs
+                assert 'callback_url' not in call_args.kwargs
+                assert 'force_authentication' not in call_args.kwargs
+                assert 'custom_state' not in call_args.kwargs
+
 
 class TestRequiresApiKey:
     """Test cases for requires_api_key decorator."""
@@ -518,6 +557,29 @@ class TestGetWorkloadAccessToken:
                 assert token == "new-token"
                 mock_context.get_workload_access_token.assert_called_once()
                 mock_local.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_workload_access_token_invalid_jwt_ignored(self):
+        """Non-JWT id_token is ignored so the workload token falls back to user_id.
+
+        fetch-workload-access-token_sample relies on this behavior: it sets
+        user_token to a plain user_id instead of a JWT."""
+        # Setup mocks
+        mock_identity_client = Mock()
+
+        with patch('agent_identity_python_sdk.core.decorators.AgentIdentityContext') as mock_context:
+            mock_context.get_workload_access_token.return_value = None
+
+            with patch('agent_identity_python_sdk.core.decorators._get_workload_access_token_local') as mock_local:
+                mock_local.return_value = "workload-token"
+
+                # Execute: user_id-like value in id_token position must be dropped
+                token = await _get_workload_access_token(
+                    mock_identity_client, user_id="user123", id_token="user123")
+
+                # Verify: local path receives user_id but no id_token
+                assert token == "workload-token"
+                mock_local.assert_called_once_with(mock_identity_client, "user123", None)
 
 
 class TestRequriesWorkloadAccessToken:
