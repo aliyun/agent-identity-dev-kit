@@ -139,7 +139,7 @@ cp .env.example .env
 
 ### 步骤六 — 插件配置（凭据注入 YAML 要点）
 
-在网关上安装/配置 AgentIdentity 插件，并添加 MCP 级规则。凭据注入的关键配置：
+在网关上从插件市场（或 CLI）安装官方 **agent-identity-oauth** 插件（HigressOfficial，版本 **1.0.1 及以上**），并添加 MCP 级规则。凭据注入的关键配置：
 
 ```yaml
 credential:
@@ -165,10 +165,16 @@ credential:
 
 ![Cedar 策略编辑器](images/14-cedar-policy-editor.png)
 
-### WASM 插件获取方式
+### 官方网关插件安装
 
-- 插件在 AI 网关插件市场正式发布后，可直接从插件市场安装使用，无需手动上传。
-- 过渡期内，可从 `agent-identity-go-wasm` 源码仓库构建插件后手动上传。构建产物 `main.wasm` **不**纳入本仓库。
+网关插件已在 AI 网关插件市场正式发布为 **agent-identity-oauth**（发布者 HigressOfficial，最低版本 **1.0.1**）。可直接在控制台插件市场安装，或通过 CLI 安装：
+
+```bash
+aliyun apig list-plugin-classes --gateway-type AI --name-like agent   # 查询插件类 ID
+aliyun apig install-plugin --gateway-ids <网关ID> --plugin-class-id <插件类ID>
+```
+
+无需手动构建或上传，详见 [DEPLOY_GUIDE.md §六](./DEPLOY_GUIDE.md)。
 
 ## ▶️ Running（运行）
 

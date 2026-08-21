@@ -141,7 +141,7 @@ Create a policy set (`mcp-gateway-policies`) in Agent Identity and bind it to th
 
 ### Step 6 — Plugin configuration (credential injection YAML)
 
-Install/configure the AgentIdentity plugin on the gateway with an MCP-level rule. The key part for credential injection:
+Install the official **agent-identity-oauth** plugin (HigressOfficial, version **1.0.1 or later**) on the gateway from the plugin marketplace (or via CLI), and add an MCP-level rule. The key part for credential injection:
 
 ```yaml
 credential:
@@ -168,10 +168,16 @@ Edit Cedar policies in the policy set to control per-user, per-tool access (opti
 
 ![Cedar policy editor](images/14-cedar-policy-editor.png)
 
-### Obtaining the WASM plugin
+### Installing the official gateway plugin
 
-- Once the plugin is officially released in the AI Gateway plugin marketplace, install it directly from the marketplace — no manual upload needed.
-- During the transition period, build the plugin from the `agent-identity-go-wasm` source repository and upload it manually. The built `main.wasm` binary is **not** committed to this repository.
+The gateway plugin is officially released in the AI Gateway plugin marketplace as **agent-identity-oauth** (publisher: HigressOfficial; minimum version **1.0.1**). Install it directly from the marketplace in the console, or via CLI:
+
+```bash
+aliyun apig list-plugin-classes --gateway-type AI --name-like agent   # look up the plugin class ID
+aliyun apig install-plugin --gateway-ids <gateway-id> --plugin-class-id <plugin-class-id>
+```
+
+No manual build/upload is required. See [DEPLOY_GUIDE.md §六](./DEPLOY_GUIDE.md) for details.
 
 ## ▶️ Running
 

@@ -467,6 +467,11 @@ def get_workload_access_token(id_token: str | None = None, region: str | None = 
         return None
     except Exception as e:
         print(f"{C_RED}[WAT]{C_RESET} 获取 WAT 失败: {type(e).__name__}: {e}")
+        if "EntityNotExists.WorkloadIdentity" in str(e):
+            print(
+                f"{C_YELLOW}[WAT]{C_RESET} 提示: SDK 默认凭据链可能解析到了其他阿里云账号，"
+                "请确认 ALIBABA_CLOUD_ACCESS_KEY_ID/SECRET（或凭据 profile）与 Workload Identity 属于同一账号"
+            )
         return None
 
 
