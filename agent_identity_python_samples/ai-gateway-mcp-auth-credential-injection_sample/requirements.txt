@@ -1,0 +1,7 @@
+mcp>=1.2.0,<2
+langchain-core>=1.5.3
+langgraph>=1.2.10
+httpx>=0.28.1
+pydantic>=2.13.4
+agent-identity-python-sdk>=0.1.4
+certifi

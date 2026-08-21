@@ -34,3 +34,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Binaries / secrets
+*.wasm
+.env
+
