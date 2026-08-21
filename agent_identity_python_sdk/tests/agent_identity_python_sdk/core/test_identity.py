@@ -578,6 +578,42 @@ class TestGetToken:
                 assert result == "oauth2-access-token"
 
     @pytest.mark.asyncio
+    async def test_get_token_m2m_request_construction(self):
+        """M2M flow must not carry UF-specific parameters in the request."""
+        with patch('agent_identity_python_sdk.core.identity.CredentialClient') as mock_credential_client, \
+             patch('agent_identity_python_sdk.core.identity.ControlClient') as mock_control_client_class, \
+             patch('agent_identity_python_sdk.core.identity.DataClient') as mock_data_client_class:
+
+            mock_credential_client.return_value = Mock()
+            mock_control_client_class.return_value = Mock()
+
+            mock_data_client = Mock()
+            mock_data_client_class.return_value = mock_data_client
+
+            client = IdentityClient(region_id="cn-beijing")
+            mock_response_body = Mock()
+            mock_response_body.access_token = "m2m-access-token"
+            mock_response_body.authorization_url = None
+            mock_response_body.session_uri = None
+            mock_response = Mock()
+            mock_response.body = mock_response_body
+
+            with patch.object(client.data_client, 'get_resource_oauth2_token', return_value=mock_response) as mock_get:
+                result = await client.get_token(
+                    credential_provider_name="test-provider",
+                    workload_identity_token="workload-token",
+                    auth_flow="M2M"
+                )
+
+                assert result == "m2m-access-token"
+                request = mock_get.call_args.args[0]
+                assert request.oauth2_flow == "M2M"
+                assert request.resource_oauth2_return_url is None
+                assert request.force_authentication is None
+                assert request.custom_state is None
+                assert request.workload_access_token == "workload-token"
+
+    @pytest.mark.asyncio
     async def test_get_token_with_on_auth_url_callback(self):
         """Test get_token when authorization URL is provided and on_auth_url callback is used."""
         with patch('agent_identity_python_sdk.core.identity.CredentialClient') as mock_credential_client, \

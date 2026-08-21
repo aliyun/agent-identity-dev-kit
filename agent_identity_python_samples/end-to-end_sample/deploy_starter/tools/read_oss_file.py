@@ -5,7 +5,25 @@ from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 from alibabacloud_oss_v2.credentials import StaticCredentialsProvider
 
-from .context.context import AgentContext
+
+def _create_oss_client(sts_credential: STSCredential, region: str):
+    credentials_provider = StaticCredentialsProvider(
+        access_key_id=sts_credential.access_key_id,
+        access_key_secret=sts_credential.access_key_secret,
+        security_token=sts_credential.security_token
+    )
+    cfg = oss.config.load_default()
+    cfg.credentials_provider = credentials_provider
+    cfg.region = region
+    return oss.Client(cfg)
+
+
+def _success(text: str) -> ToolResponse:
+    return ToolResponse(content=[TextBlock(type="text", text=text)])
+
+
+def _error(text: str) -> ToolResponse:
+    return ToolResponse(content=[TextBlock(type="text", text=text)])
 
 
 @requires_sts_token(
@@ -26,28 +44,12 @@ def get_oss_object(bucket: str, key: str, region: str, sts_credential: STSCreden
 
     Raises:
     """
-
-    credentials_provider = StaticCredentialsProvider(
-        access_key_id=sts_credential.access_key_id,
-        access_key_secret=sts_credential.access_key_secret,
-        security_token=sts_credential.security_token
-    )
-
-    cfg = oss.config.load_default()
-    cfg.credentials_provider = credentials_provider
-    cfg.region = region
-
-    client = oss.Client(cfg)
-    result = client.get_object(oss.GetObjectRequest(
-        bucket=bucket,
-        key=key,
-    ))
-
-    return ToolResponse(
-        content=[
-            TextBlock(
-                type="text",
-                text=f"{result.body.content}",
-            ),
-        ],
-    )
+    try:
+        client = _create_oss_client(sts_credential, region)
+        result = client.get_object(oss.GetObjectRequest(
+            bucket=bucket,
+            key=key,
+        ))
+        return _success(f"{result.body.content}")
+    except Exception as e:
+        return _error(f"Failed to get object '{key}' from bucket '{bucket}': {str(e)}")

@@ -58,6 +58,28 @@ def my_function(access_token: str):
 my_function()
 ```
 
+### 使用装饰器获取 M2M 令牌
+
+机器对机器（M2M）场景无需用户登录。请先创建 M2M 类型的凭证提供者，然后将 `auth_flow` 设置为 `"M2M"`：
+
+```python
+from agent_identity_python_sdk.core import requires_access_token
+
+@requires_access_token(
+    credential_provider_name="your-m2m-provider-name",
+    inject_param_name="access_token",
+    auth_flow="M2M",
+)
+def my_function(access_token: str):
+    # 在这里使用 M2M 访问令牌
+    print(f"Access token: {access_token}")
+
+# 调用函数
+my_function()
+```
+
+M2M 使用 client_credentials 授权模式：不读取用户上下文，也不会返回授权链接。完整示例（钉钉工作通知）请参考 `agent_identity_python_samples/end-to-end_sample`。
+
 ### 使用装饰器获取 API 密钥
 
 ```python

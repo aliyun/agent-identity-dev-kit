@@ -175,7 +175,7 @@ class IdentityClient:
         scopes: Optional[List[str]] = None,
         workload_identity_token: str,
         on_auth_url: Optional[Callable[[str], Any]] = None,
-        auth_flow: Literal["USER_FEDERATION"],
+        auth_flow: Optional[Literal["USER_FEDERATION", "M2M"]] = None,
         callback_url: Optional[str] = None,
         force_authentication: bool = False,
         custom_state: Optional[str] = None,
@@ -194,7 +194,7 @@ class IdentityClient:
 
             on_auth_url: Callback function for handling authorization URLs when they are obtained
 
-            auth_flow: Authentication flow type ("USER_FEDERATION")
+            auth_flow: Authentication flow type ("USER_FEDERATION" or "M2M"). None means auto-detect based on Provider type.
 
             callback_url: OAuth2 callback URL
 
@@ -226,16 +226,27 @@ class IdentityClient:
                 endpoint=self.data_api_endpoint or f"agentidentitydata.{self.region_id}.aliyuncs.com"
             ))
 
-        request = GetResourceOAuth2TokenRequest(
-            resource_credential_provider_name=credential_provider_name,
-            scopes=scopes,
-            oauth2_flow=auth_flow,
-            workload_access_token=workload_identity_token,
-            resource_oauth2_return_url=callback_url,
-            force_authentication=force_authentication,
-            custom_state=custom_state,
-            custom_parameters=custom_parameters,
-        )
+        if auth_flow == "M2M":
+            # M2M path: no callback_url, force_authentication, or custom_state
+            request = GetResourceOAuth2TokenRequest(
+                resource_credential_provider_name=credential_provider_name,
+                scopes=scopes,
+                oauth2_flow=auth_flow,
+                workload_access_token=workload_identity_token,
+                custom_parameters=custom_parameters,
+            )
+        else:
+            # UF path: existing logic unchanged
+            request = GetResourceOAuth2TokenRequest(
+                resource_credential_provider_name=credential_provider_name,
+                scopes=scopes,
+                oauth2_flow=auth_flow,
+                workload_access_token=workload_identity_token,
+                resource_oauth2_return_url=callback_url,
+                force_authentication=force_authentication,
+                custom_state=custom_state,
+                custom_parameters=custom_parameters,
+            )
         try:
             response = client.get_resource_oauth2_token(request)
         except Exception as e:

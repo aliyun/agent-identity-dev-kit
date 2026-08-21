@@ -20,6 +20,3 @@ SETUP_DESCRIPTION: "agentDev-starter"
 SETUP_LONG_DESCRIPTION: "agentDev-starter services, supporting both direct execution and uvicorn deployment"
 
 FC_RUN_CMD: "python3 -m deploy_starter.main"
-
-APP_REDIRECT_URI: "http://localhost:8090"
-MCP_SERVER: "<your-mcp-server-endpoint>"
