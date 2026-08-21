@@ -14,6 +14,8 @@ order-service-oauth: 带 OAuth2 授权的订单服务（单文件，内存存储
     CLIENT_ID        — OAuth client_id，默认 order-client
     CLIENT_SECRET    — OAuth client_secret，默认 order-secret
     PORT             — 监听端口，默认 8001
+    ALLOWED_REDIRECT_PREFIXES — redirect_uri 白名单前缀（逗号分隔），
+                        默认含 Agent Identity 数据面回调与本地调试地址
 
 OAuth 流程:
     1. 浏览器打开 /oauth/authorize 页面，点击授权
@@ -21,6 +23,7 @@ OAuth 流程:
     3. 用 Bearer token 访问订单 API
 """
 
+import html
 import os
 import secrets
 import sys
@@ -52,6 +55,32 @@ PORT = int(os.getenv("PORT", "8001"))
 TOKEN_EXPIRES_IN = 3600           # 1 小时
 REFRESH_TOKEN_EXPIRES_IN = 86400  # 24 小时
 CODE_EXPIRES_IN = 300             # 5 分钟
+
+# redirect_uri 前缀白名单（防开放重定向）：
+# 默认允许 Agent Identity 数据面回调地址与本地调试地址，
+# 其他合法回调可通过环境变量 ALLOWED_REDIRECT_PREFIXES（逗号分隔的 URL 前缀）配置。
+_DEFAULT_REDIRECT_PREFIXES = (
+    "https://agentidentitydata.cn-beijing.aliyuncs.com/oauth2/callback/,"
+    "http://localhost:,http://127.0.0.1:"
+)
+ALLOWED_REDIRECT_PREFIXES = [
+    p.strip()
+    for p in os.getenv("ALLOWED_REDIRECT_PREFIXES", _DEFAULT_REDIRECT_PREFIXES).split(",")
+    if p.strip()
+]
+# OAUTH_BASE_URL 是部署方设置的可信配置，允许回跳到服务自身（首页快速开始流程用）
+if OAUTH_BASE_URL:
+    ALLOWED_REDIRECT_PREFIXES.append(OAUTH_BASE_URL.rstrip("/") + "/")
+
+
+def _validate_redirect_uri(redirect_uri: str) -> None:
+    """校验 redirect_uri 命中白名单前缀，防止开放重定向。不匹配时返回 400，不做跳转。"""
+    if not any(redirect_uri.startswith(p) for p in ALLOWED_REDIRECT_PREFIXES):
+        raise HTTPException(
+            400,
+            "Invalid redirect_uri: not in the allowed list. "
+            "Set ALLOWED_REDIRECT_PREFIXES (comma-separated URL prefixes) to allow it.",
+        )
 
 
 @app.on_event("startup")
@@ -140,8 +169,15 @@ def authorize_page(
         raise HTTPException(400, "Invalid client_id")
     if response_type != "code":
         raise HTTPException(400, "Only response_type=code is supported")
+    _validate_redirect_uri(redirect_uri)
 
-    html = f"""
+    # 用户可控参数插入 HTML 前统一转义，防反射型 XSS
+    client_id = html.escape(client_id)
+    redirect_uri = html.escape(redirect_uri)
+    scope = html.escape(scope)
+    state = html.escape(state)
+
+    page = f"""
     <!DOCTYPE html>
     <html><head><meta charset="utf-8"><title>授权</title>
     <style>
@@ -173,7 +209,7 @@ def authorize_page(
         </form>
     </div></body></html>
     """
-    return HTMLResponse(html)
+    return HTMLResponse(page)
 
 
 @app.post("/oauth/authorize", tags=["OAuth"])
@@ -184,6 +220,9 @@ async def authorize_post(request: Request):
     scope = form.get("scope", "orders:read orders:write")
     state = form.get("state", "")
     action = form.get("action", "")
+
+    # 跳转前校验 redirect_uri 白名单，防止开放重定向
+    _validate_redirect_uri(redirect_uri)
 
     if action == "deny":
         params = {"error": "access_denied", "error_description": "User denied"}
@@ -406,7 +445,10 @@ def index(request: Request):
         f"scope=orders:read+orders:write&"
         f"state=test123"
     )
-    html = f"""
+    # base 可能来自请求 Host 推断，插入 HTML 前转义
+    base = html.escape(base)
+    auth_url = html.escape(auth_url)
+    page = f"""
     <!DOCTYPE html>
     <html><head><meta charset="utf-8"><title>Order Service</title>
     <style>
@@ -434,7 +476,7 @@ def index(request: Request):
         </ul>
     </body></html>
     """
-    return HTMLResponse(html)
+    return HTMLResponse(page)
 
 
 if __name__ == "__main__":

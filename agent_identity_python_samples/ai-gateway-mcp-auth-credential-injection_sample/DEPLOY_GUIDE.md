@@ -149,6 +149,8 @@ OAUTH_BASE_URL=http://$ECS_IP:8001 nohup .venv/bin/uvicorn main:app --host 0.0.0
 > **端口说明**：服务默认监听 8001 端口，需在阿里云安全组中放行该端口（连同 22 端口，见 §1.1）。
 >
 > **提示**：此处 `OAUTH_BASE_URL` 暂用 ECS 地址便于本地验证；待 AI 网关就绪并按步骤四的"OAuth 端点透传"（§4.7）配置完成后，需将 `OAUTH_BASE_URL` 改为网关入口域名并重启服务（须与 provider 的 Issuer 一致，见 §三的回填说明）。
+>
+> **安全说明**：订单服务对 OAuth 授权跳转的 `redirect_uri` 做前缀白名单校验（默认允许 Agent Identity 数据面回调 `https://agentidentitydata.cn-beijing.aliyuncs.com/oauth2/callback/`、本地调试地址及 `OAUTH_BASE_URL` 自身）；其他区域或自定义回调地址可通过环境变量 `ALLOWED_REDIRECT_PREFIXES`（逗号分隔的 URL 前缀）配置。
 
 验证启动成功：
 
