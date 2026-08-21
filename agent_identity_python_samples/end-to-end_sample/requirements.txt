@@ -5,7 +5,7 @@ uvicorn
 agentscope-runtime==1.0.0
 setuptools
 PyYAML
-jwt
+PyJWT>=2.8.0
 pydantic==2.11.7
 urllib3==2.3.0
 starlette==0.46.2
@@ -16,5 +16,7 @@ agentscope==1.0.8
 utils==1.0.2
 base58==2.1.1
 alibabacloud_ims20190815==3.3.3
-agent-identity-python-sdk>=0.1.4
+agent-identity-python-sdk>=0.1.6
 agent-identity-cli>=0.1.1
+exceptiongroup
+a2a-sdk==0.3.26

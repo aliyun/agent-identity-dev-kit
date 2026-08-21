@@ -62,6 +62,7 @@ async def on_auth(url: str):
     # force_authentication=True,
     callback_url= f"{get_config_with_default('APP_REDIRECT_URI', 'http://localhost:8090')}/callback",
     inject_param_name="access_token",
+    custom_parameters={"prompt": "consent"}
 )
 async def ding_talk_tool(
         content: str,

@@ -150,3 +150,7 @@ if __name__ == "__main__":
     if oauth_credential_provider_name:
         delete_oauth2_credential_provider(oauth_credential_provider_name)
 
+    m2m_provider_name = read_local_config("m2m_provider_name")
+    if m2m_provider_name:
+        delete_oauth2_credential_provider(m2m_provider_name)
+

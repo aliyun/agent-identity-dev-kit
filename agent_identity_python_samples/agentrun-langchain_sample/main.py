@@ -22,7 +22,7 @@ MODEL_SERVICE_NAME = os.getenv("MODEL_SERVICE_NAME")
 SANDBOX_NAME = os.getenv("SANDBOX_NAME")
 
 if not MODEL_SERVICE_NAME:
-    raise ValueError("请将 MODEL_NAME 替换为您已经创建的模型名称")
+    raise ValueError("请将 MODEL_SERVICE_NAME 替换为您已经创建的模型服务名称")
 
 code_interpreter_tools = []
 if SANDBOX_NAME and not SANDBOX_NAME.startswith("<"):

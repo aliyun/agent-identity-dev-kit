@@ -56,4 +56,4 @@ def get_object_from_oss(bucket: str, key: str, region: str) -> str:
 
     Raises:
     """
-    return get_oss_object(bucket=bucket, key=key, region="cn-hangzhou")
+    return get_oss_object(bucket=bucket, key=key, region=region)
