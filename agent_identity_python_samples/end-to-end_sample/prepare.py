@@ -182,13 +182,13 @@ def create_api_key_provider() -> str:
             # Provider exists (may hold a stale apikey from an old prepare run),
             # refresh it so re-running prepare always syncs the latest key.
             logger.warning('[409] APIKeyCredentialProvider already exists, updating apikey.')
-            client.control_client.update_apikey_credential_provider(
+            update_response = client.control_client.update_apikey_credential_provider(
                 UpdateAPIKeyCredentialProviderRequest(
                     apikey_credential_provider_name=API_KEY_CREDENTIAL_PROVIDER_NAME,
                     apikey=DASHSCOPE_API_KEY,
                 )
             )
-            logger.info(f'API key credential provider: {API_KEY_CREDENTIAL_PROVIDER_NAME} updated.')
+            logger.info(f'API key credential provider updated, request_id: {update_response.body.request_id}')
             return API_KEY_CREDENTIAL_PROVIDER_NAME
         else:
             raise
