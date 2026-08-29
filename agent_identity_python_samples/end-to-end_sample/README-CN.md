@@ -267,7 +267,7 @@ export DASHSCOPE_API_KEY=<your-api-key>
 }
 ```
 检查后端服务配置
-在`backend`目录下的`app.yml`文件中配置以下内容：
+在`application`目录下的`app.yml`文件中配置以下内容：
 ```yaml
 INBOUND_REDIRECT_URI: "your frontend redirect uri, e.g. http://localhost:8090"
 AGENT_FRAMEWORK: "agent framework: agentScope or agentRun"
