@@ -107,15 +107,16 @@ from (also documented inline in `env.template`, and validated by
 | `ALIYUN_SECURITY_TOKEN` | *(optional)* STS | Only when using temporary credentials |
 | `CONTROL_ENDPOINT` | — (generic form) | Control plane, `agentidentity.<region>.aliyuncs.com` |
 | `DATA_ENDPOINT` | — (generic form) | Data plane, `agentidentitydata.<region>.aliyuncs.com` |
-| `SIGNIN_BASE_URL` | User pool detail page | Pool OAuth root, `https://signin.<region>.aliyuncs.com` |
+| `SIGNIN_BASE_URL` | User pool detail page | Pool OAuth root, e.g. `https://signin.<region>.aliyuncs.com` (pre-release) or the production sign-in domain |
+| `POOL_JWKS_BASE` | *(optional)* | Pool discovery/JWKS host root. Default (empty) = `DATA_ENDPOINT` (pre-release behavior); set to the sign-in domain when the environment serves pool discovery/JWKS there (e.g. Singapore `ap-southeast-1` production, where the data-plane path returns 404). May equal `SIGNIN_BASE_URL`. |
 | `USER_POOL_ID` | setup output / console | User pool ID (`up_...`) |
 | `OAUTH_CLIENT_ID` | setup output / console | Pool OAuth client ID (`client_...`) |
 | `OAUTH_CLIENT_SECRET` | setup output / console | Pool OAuth client secret (or use `OAUTH_CLIENT_SECRET_FILE`, a 0600 file) |
 | `OAUTH_REDIRECT_URI` | — | `http://127.0.0.1:8765/callback` (default) |
 | `WI_NAME` | setup output / console | Workload identity name — must have session binding enabled |
 | `OBO_PROVIDER_NAME` | setup output / console | Outbound OAuth2 credential provider name |
-| `ORDER_SERVICE_AUDIENCE` | IDaaS console → order-service app | Audience, shaped `agent-<outbound-app-clientId>` |
-| `ORDER_SERVICE_SCOPES` | — (optional) | Comma-separated; default `read,write.all` |
+| `ORDER_SERVICE_AUDIENCE` | IDaaS console → the enterprise-app detail page | **The audience identifier of the enterprise service app itself** (e.g. `test-aud`); **not** the OBO provider's OutboundAudience (`agent-…` form) — passing the latter fails with `Forbidden.IdaasRsNotAuthorized` (verified in production) |
+| `ORDER_SERVICE_SCOPES` | — (optional) | Comma-separated; default `read,write.all`; must be a **subset of the scopes the target app is authorized for** — exceeding it fails with `Forbidden.ScopeNotGranted` (verified in production; when in doubt, minimize scopes one by one) |
 | `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | IDaaS discovery document | `issuer` / `jwks_uri` from `GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` (publicly reachable) |
 | `SETUP_*` | — (mode B only) | Resource names and provider config for `setup --mode=script`; see the comments in `env.template` |
 
@@ -145,7 +146,10 @@ note at the top of that document):
    `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`.
 5. Create the order-service app on the IDaaS side, then the OAuth2 credential
    provider in Agent Identity (vendor IDaaS, type ON_BEHALF_OF) → record
-   `OBO_PROVIDER_NAME` / `ORDER_SERVICE_AUDIENCE`.
+   `OBO_PROVIDER_NAME`; take `ORDER_SERVICE_AUDIENCE` from the enterprise app's
+   **own audience identifier** on its detail page (e.g. `test-aud`) — **not** the
+   provider's OutboundAudience (`agent-…` form; passing it fails with
+   `Forbidden.IdaasRsNotAuthorized`).
 6. Create the IdentityProvider (discovery = this pool) and the
    WorkloadIdentity **with session binding enabled** → record `WI_NAME` and
    the order-service issuer/JWKS from the IDaaS discovery document.
@@ -163,11 +167,14 @@ only on full success writes the outputs back to `.env` (0600, atomic). A
 failed run never writes a half-filled `.env` — fix the reported issue and
 re-run; completed steps are skipped.
 
-**Known limitation (honest note from pre-release testing)**: the CLI help for
-`SetSpecificIdentityProvider` currently lists **DingTalk only** as the
-supported identity-source type. If binding IDaaS via the script fails with
-`InvalidParameter`, do that single binding in the console (Option 1, step 2)
-and re-run the script — it will pick up where it left off. Also note
+**Known limitation (honest note from pre-release + Singapore production
+testing)**: the CLI help for `SetSpecificIdentityProvider` currently lists
+**DingTalk only** as the supported identity-source type (production testing
+confirmed the API accepts **DingTalk / Feishu / WeCom only — IDaaS binding has
+no API and must be done in the console**). When the script's IDaaS binding is
+rejected with `InvalidParameter`, it prints fallback guidance and continues
+with the remaining steps; finish that single binding in the console (Option 1,
+step 2) and re-run the script — it picks up where it left off. Also note
 `SETUP_OBO_PROVIDER_CONFIG` (the JSON pointing at the IDaaS order-service
 application) must be filled in `.env` beforehand, and the credential-provider
 quota is 1 per account (an existing one is reused).
@@ -175,11 +182,13 @@ quota is 1 per account (an existing one is reused).
 **What the script writes back — and what it does not**: the script only
 writes back the resources it creates (`USER_POOL_ID`, `OAUTH_CLIENT_ID`,
 `OAUTH_CLIENT_SECRET`, `WI_NAME`, `OBO_PROVIDER_NAME`). You still need to
-fill in `SIGNIN_BASE_URL`, `ORDER_SERVICE_AUDIENCE`, `ORDER_SERVICE_ISSUER`
-and `ORDER_SERVICE_JWKS_URI` yourself, following the table above (the last
-three require creating the order-service application on the IDaaS side first
-— see Option 1, steps 5/6). Run `python3 sample.py --check` before the demo
-to confirm everything is in place.
+fill in `SIGNIN_BASE_URL`, `POOL_JWKS_BASE` (when the environment needs it),
+`ORDER_SERVICE_AUDIENCE`, `ORDER_SERVICE_ISSUER` and `ORDER_SERVICE_JWKS_URI`
+yourself, following the table above (the `ORDER_SERVICE_*` values require
+creating the order-service application on the IDaaS side first — see Option 1,
+steps 5/6; mind the audience pitfall — not the provider's OutboundAudience).
+Run `python3 sample.py --check` before the demo to confirm everything is in
+place.
 
 ### SCIM (out of scope for v1)
 
@@ -271,13 +280,13 @@ python3 sample.py obo
 
 ```
 [obo] 调用 GetResourceOAuth2Token（OAuth2Flow=ON_BEHALF_OF）…
-      Provider=idaas-obo-sample-provider Audience=agent-<outbound-app-clientId> Scopes=["read", "write.all"]
+      Provider=idaas-obo-sample-provider Audience=<enterprise-app audience, e.g. test-aud> Scopes=["read", "write.all"]
       契约：业务参数必须全部放 formData body（Scopes 传 JSON 数组字符串，禁止逐个传参）
 [obo] 成功（RequestId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）：订单服务 AT 已落盘（eyJhbGci…(len=1498)）
 [obo] 订单服务 RT 已落盘（eyJhbGci…(len=743)）；刷新令牌仅作演示，sample 不实现刷新流程
 [obo] AT claims（on-behalf-of 委托语义）：
         iss     = https://<your-eiam-instance>…（令牌由 IDaaS 签发）
-        aud     = agent-<outbound-app-clientId>（受众=订单服务应用）
+        aud     = <enterprise-app audience, e.g. test-aud>（受众=订单服务应用）
         scope   = read write.all
         sub     = user_xxxxxxxx…（主体=登录员工）
         act.sub = acs:agentidentity:<region>:<account-id>:workloadidentitydirectory/default/workloadidentity/idaas-obo-sample-wi
@@ -344,6 +353,28 @@ redirect-uri whitelist ignores loopback ports, so no console change is needed:
 To see "own orders" with your real sub, map it in
 `orders/mock_data.py` (`SUB_ALIAS = {"user_xxxxxxxx…": "employee-alice"}`),
 or just re-run `demo` with a different account.
+
+### 🌏 Region/environment differences & token lifetimes (verified in production)
+
+The differences below come from an end-to-end production run in Singapore
+`ap-southeast-1` (2026-08); pre-release environments keep the default behavior
+described in this document:
+
+| Topic | Pre-release | Production (e.g. Singapore `ap-southeast-1`) |
+|---|---|---|
+| Sign-in domain `SIGNIN_BASE_URL` | `https://signin.<region>.aliyuncs.com` form | `https://signin-<region>.aliyunagentid.com` (hyphen + `aliyunagentid.com`; pre-release is `pre-signin-<region>.alibabacloudagentid.com`); always take the address shown on the user-pool detail page |
+| Pool discovery / JWKS | Served on `DATA_ENDPOINT` (leave `POOL_JWKS_BASE` empty — the default) | Served on the **sign-in domain** (the data-plane path returns 404) — `POOL_JWKS_BASE` must be set to the sign-in domain (may equal `SIGNIN_BASE_URL`) |
+| Inbound IDaaS identity-source binding | Console only (the API accepts DingTalk / Feishu / WeCom types only) | Also console-only; additionally add `https://signin-<region>.aliyunagentid.com/<poolId>/sso/oidc/callback` to the **redirect whitelist of the inbound app on the IDaaS side** |
+| OBO audience / scope | — | `ORDER_SERVICE_AUDIENCE` = the enterprise app's own audience identifier (e.g. `test-aud`, not the provider's OutboundAudience); `ORDER_SERVICE_SCOPES` must be a subset of the app's authorized scopes (see the table above) |
+| Data-plane RPC stability | Occasional `MissingParameter.*` during rolling-release windows (the sample auto-retries through) | Mixed old/new instances: an occasional `MissingParameter.Audience` is usually a misleading error from an old instance or an expired WAT — retry through / get a fresh WAT and read the real error code |
+
+Token lifetimes (measured in production; plan step-by-step debugging around them):
+
+| Token | Lifetime | Usage notes |
+|---|---|---|
+| id_token (pool ID Token) | ~1 hour | Re-run `login` after expiry; while the browser SSO session lives, no re-auth is needed |
+| WAT | ~5 minutes | Run `obo` **immediately** after `exchange-wat` (`demo` chains them automatically) |
+| Order-service AT (OBO output) | ~20 minutes, **no refresh token** | After expiry re-run `exchange-wat` → `obo`; no re-login needed while the id_token is valid |
 
 ## ✅ Verification
 

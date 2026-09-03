@@ -2,11 +2,13 @@
 
 Error codes in English, root causes and remedies in Chinese. Every entry below
 comes from real integration testing (design reviews + pre-release
-verification). When the CLI fails, it prints the error together with a
-next-step hint — this table gives the full background.
+verification + Singapore production verification). When the CLI fails, it
+prints the error together with a next-step hint — this table gives the full
+background.
 
 错误码保持英文原样，根因与处置用中文说明。以下条目全部来自真实联调沉淀
-（设计评审 + 预发实测）。CLI 出错时会附带下一步指引，本表提供完整背景。
+（设计评审 + 预发实测 + 新加坡正式环境实测）。CLI 出错时会附带下一步指引，
+本表提供完整背景。
 通用排查第一步永远是：`python3 sample.py --check`。
 
 ---
@@ -33,7 +35,10 @@ next-step hint — this table gives the full background.
 | `MissingParameter.Scopes` | `Scopes` 传参格式不合法：**逐个传参（`--Scopes.N` 形态）不被接受**，必须是 **JSON 数组字符串** | 传 `["read","write.all"]` 单参数；sample 的 `serialize_scopes` 已按此契约处理 |
 | `MissingParameter.*` 偶发出现且 sample 自动重试（30 次 × 5s） | 预发**滚动发布窗口**抖动：新旧实例对参数绑定短暂不一致 | 等待自动重试完成；重试仍失败说明不是窗口抖动，按具体缺失参数排查（如 Scopes 格式） |
 | `ServiceUnavailable.UpstreamTokenEndpoint` | region 调上游 IDaaS token 端点失败：通常是**出站 provider 侧（IDaaS 订单服务应用）密钥缺失/失效**或授权边不齐 | 检查 `OBO_PROVIDER_NAME` 对应 provider 的配置：IDaaS 侧订单服务应用的密钥、认证方式与应用授权 |
-| 订单服务 401（`aud` 不符）或 OBO 报 audience 相关错误 | `Audience` 没有指向订单服务应用：audience 必须是 `agent-<出站应用clientId>` 形态 | 修正 `.env` 的 `ORDER_SERVICE_AUDIENCE`（IDaaS 控制台订单服务应用详情页取值） |
+| 订单服务 401（`aud` 不符，本地验签） | 令牌 `aud` 与 `.env` 验签配置不一致：`ORDER_SERVICE_AUDIENCE` 未取**IDaaS 控制台该企业服务应用详情页的 audience 标识**（如 `test-aud`） | `ORDER_SERVICE_AUDIENCE` 改传企业服务应用自身的 audience 标识（不是 provider 的 OutboundAudience，见下一条）；`iss` / `jwks_uri` 取 IDaaS 公网 discovery 值；401 响应的 `error_description` 会写明具体是哪项不符 |
+| `Forbidden.IdaasRsNotAuthorized`（OBO 被拒） | **`Audience` 误传 OBO provider 的 OutboundAudience**（`agent-app_x…` 形态；正式环境实测曾致数小时排查），或企业服务应用未完成 RS 授权配置 | `ORDER_SERVICE_AUDIENCE` 改传 **IDaaS 该企业服务应用自身的 audience 标识**（控制台应用详情页取值，如 `test-aud`）；确认该应用的授权边 / RS 配置就绪后重跑 `obo` |
+| `Forbidden.ScopeNotGranted`（OBO 被拒） | 请求的 scope **超出**企业服务应用已授权 scope 集合（正式环境实测：应用仅授权 `read` 时带 `write.all` 即报此错） | 做 **scope 最小化实验**：`ORDER_SERVICE_SCOPES` 逐个删减至通过，再按需到 IDaaS 应用侧补授权；注意 Audience 错误未修正前做 scope 实验无意义（先撞 RS 授权墙，看不到真实错误码） |
+| `MissingParameter.Audience`（偶发） | 正式环境数据面**新旧实例混布**的误导性报错，或 WAT 已过期 | 样例自带重试（`wait_window`）可穿透实例混布抖动；重试仍失败则重走 `exchange-wat` 换新 WAT，再看**真实错误码**（正式环境实测） |
 | `EntityNotExists.OAuth2CredentialProvider` 等 | 资源不存在：名称与控制台不一致，或**资产被清理**（预发实测：provider 曾被环境清理；且**配额=1** 被占用） | 核对 `.env` 的 `WI_NAME` / `OBO_PROVIDER_NAME`；重建 provider 前需先删除旧 provider（注意会影响引用它的既有链路） |
 | `EntityAlreadyExists.*` | setup 重跑时资源已存在 | sample 按名复用即可，无需处置；provider 场景如需重建先删旧再建 |
 
@@ -63,8 +68,8 @@ next-step hint — this table gives the full background.
 
 | 错误码 / 现象 | 根因 | 处置 |
 |---|---|---|
-| DNS 解析失败（NXDOMAIN），域名为 `vpc` 前缀/后缀形态 | **池 discovery 返回的 issuer/jwks_uri 指向 VPC 专用域名，公网不可解析**（预发实测 NXDOMAIN） | 公网场景改用等价公网路径：池 JWKS 用 `https://{DATA_ENDPOINT}/{USER_POOL_ID}/oauth2/jwks`；订单服务验签直接用 IDaaS 公网 discovery 值 |
-| 请求打到错误域名（404 / MissingParameter 诡异出现） | **双域名坑**：token 兑换必须走 `SIGNIN_BASE_URL`（`signin.<region>` 域名）；discovery / JWKS 走 `DATA_ENDPOINT` 域名；WAT/OBO RPC 走数据面域名；setup/cleanup 走控制面域名 | 对照 [architecture.md 的双域名表](./architecture.md#the-dual-domain-pitfall)核对 `.env` 的三个端点配置 |
+| DNS 解析失败（NXDOMAIN），域名为 `vpc` 前缀/后缀形态 | **池 discovery 返回的 issuer/jwks_uri 指向 VPC 专用域名，公网不可解析**（预发实测 NXDOMAIN） | 公网场景改用等价公网路径：池 JWKS 预发用 `https://{DATA_ENDPOINT}/{USER_POOL_ID}/oauth2/jwks`（正式环境该路径走登录域，见 README「区域/环境差异」一节）；订单服务验签直接用 IDaaS 公网 discovery 值 |
+| 请求打到错误域名（404 / MissingParameter 诡异出现） | **双域名坑**：token 兑换必须走 `SIGNIN_BASE_URL`（登录域）；discovery / JWKS 的域名**因环境而异**（预发走 `DATA_ENDPOINT`；正式环境如新加坡走登录域——配 `POOL_JWKS_BASE`）；WAT/OBO RPC 走数据面域名；setup/cleanup 走控制面域名 | 对照 [architecture.md 的双域名表](./architecture.md#the-dual-domain-pitfall)核对 `.env` 的端点配置 |
 | Python 3.12+ 下 HTTPS 请求报证书错误 | `urllib` 无系统 CA 可用 | 安装可选依赖 `pip install certifi`（sample 检测到无系统 CA 时会自动尝试 certifi；不装也能跑通其余链路） |
 | 终端长命令输出偶发丢失 | 环境抖动，非 sample 问题 | 关键输出 sample 已落盘 `.tokens/` 与 RequestId；可用 `python3 sample.py --check` 复查状态 |
 | 远程/无 GUI 环境中浏览器打不开（login 卡在等待回调） | `webbrowser.open` 在 ssh 会话/无桌面环境没有可渲染的浏览器，回调服务仍在远程机上监听 loopback | 端口转发到本地：`ssh -L 8765:127.0.0.1:8765 <user>@<host>`（端口按实际 `--port` 调整），然后在**本地浏览器**手动打开 login 终端打印的 authorize URL——回调会经转发命中远程 CLI 的 loopback 服务 |

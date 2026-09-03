@@ -27,9 +27,9 @@ checklist 逐项打码：
 - [ ] **浏览器书签栏**（截图时藏起书签，避免泄露内部系统域名）
 
 文档中的示例值一律使用填充形态：`up_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`、
-`client_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`、`agent-<出站应用clientId>`、
-`<your-eiam-instance>`、`<account-id>` 等，请替换为你的真实值（只填进本地
-`.env`，不要提交到仓库）。
+`client_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`、`<企业服务应用 audience 标识，
+如 test-aud>`、`<your-eiam-instance>`、`<account-id>` 等，请替换为你的真实值
+（只填进本地 `.env`，不要提交到仓库）。
 
 ---
 
@@ -41,7 +41,7 @@ checklist 逐项打码：
 | 2 | 绑定 IDaaS（身份源联邦） | 无（SSOStatus=Enabled 即可） |
 | 3 | （可选）开启 SCIM provisioning | 主线可跳过 |
 | 4 | 创建池 OAuth 应用（数据面登录客户端） | `OAUTH_CLIENT_ID`、`OAUTH_CLIENT_SECRET` |
-| 5 | 注册出站资源（订单服务应用） | `OBO_PROVIDER_NAME`、`ORDER_SERVICE_AUDIENCE` |
+| 5 | 注册出站资源（订单服务应用） | `OBO_PROVIDER_NAME`、`ORDER_SERVICE_AUDIENCE`（企业服务应用自身的 audience 标识） |
 | 6 | 创建工作负载身份 + 记录令牌验签源 | `WI_NAME`、`SIGNIN_BASE_URL`、`ORDER_SERVICE_ISSUER`、`ORDER_SERVICE_JWKS_URI` |
 
 ---
@@ -107,8 +107,10 @@ USER_POOL_ID=up_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 >   --user-pool-name idaas-obo-sample-pool --identity-provider-type IDaaS
 > ```
 > ⚠️ 注意：aliyun CLI 帮助标注 `SetSpecificIdentityProvider` 当前**仅支持
-> DingTalk** 类型（预发实测）。IDaaS 类型的绑定以**控制台操作为准**；若脚本
-> 绑定被拒绝，请回到本步骤用控制台完成后再重跑 setup（幂等，会跳过已完成步骤）。
+> DingTalk** 类型（预发实测；新加坡正式环境实测该 API 仅接受 DingTalk /
+> Feishu / WeCom，**IDaaS 类型必须控制台人工绑定**）。IDaaS 类型的绑定以
+> **控制台操作为准**；脚本绑定被拒绝时会打印兑底指引并继续后续步骤，请在
+> 控制台完成本步骤后再重跑 setup（幂等，会跳过已完成步骤）。
 
 ---
 
@@ -179,8 +181,11 @@ OAUTH_REDIRECT_URI=http://127.0.0.1:8765/callback
 凭证提供商。
 
 **导航路径（IDaaS 侧）**：进入 IDaaS（EIAM）实例控制台 →「应用」→「添加应用」
-→ 选择「企业服务应用」类型创建（模拟订单服务）。记录该应用的
-**应用 clientId**——订单服务受众即 `agent-<出站应用clientId>` 形态。
+→ 选择「企业服务应用」类型创建（模拟订单服务）。记录该应用的**应用
+clientId**（provider 配置需要）与其 **audience 标识**（应用详情页，如
+`test-aud` 这类值）——后者即 `ORDER_SERVICE_AUDIENCE`。⚠️ **不是** OBO
+provider 的 OutboundAudience（`agent-…` 形态）：误传将报
+`Forbidden.IdaasRsNotAuthorized`（正式环境实测）。
 
 ![IDaaS 侧企业应用（出站应用）](images/11-eiam-app.png)
 
@@ -196,7 +201,9 @@ OAUTH_REDIRECT_URI=http://127.0.0.1:8765/callback
    （clientId / clientSecret 等，字段结构以
    `aliyun agentidentity create-oauth2-credential-provider --help` 为准），
    并确保 IDaaS 侧已完成该应用的授权边（应用授权给目标）与认证方式/密钥配置。
-4. 记录 `ORDER_SERVICE_AUDIENCE`（IDaaS 控制台该企业服务应用详情页）。
+4. 记录 `ORDER_SERVICE_AUDIENCE`：IDaaS 控制台该**企业服务应用详情页的
+   audience 标识**（如 `test-aud`）；**不是** provider 的 OutboundAudience
+   （`agent-…` 形态，误传报 `Forbidden.IdaasRsNotAuthorized`）。
 
 ![创建出站资源凭证 Provider](images/10-create-obo-provider.png)
 
@@ -204,7 +211,7 @@ OAUTH_REDIRECT_URI=http://127.0.0.1:8765/callback
 
 ```ini
 OBO_PROVIDER_NAME=idaas-obo-sample-provider
-ORDER_SERVICE_AUDIENCE=agent-<出站应用clientId>
+ORDER_SERVICE_AUDIENCE=<企业服务应用的 audience 标识，如 test-aud>
 ```
 
 > **等价的 API/CLI 方式**：

@@ -13,7 +13,7 @@ lifecycles:
 | Plane | Owns | Endpoints | API version | Subcommands |
 |---|---|---|---|---|
 | **Control plane** (one-time) | User pool, IDaaS identity-source binding, pool OAuth client, IdentityProvider, WorkloadIdentity, OAuth2 credential provider | `agentidentity.<region>.aliyuncs.com` | `2025-09-01` | `setup`, `cleanup` |
-| **Data plane** (per run) | Browser login (authorize / token), WAT exchange, OBO token minting, JWKS-based verification | `https://signin.<region>.aliyuncs.com` (OAuth endpoints) and `agentidentitydata.<region>.aliyuncs.com` (RPC) | OAuth2 + `2025-11-27` | `login`, `exchange-wat`, `obo`, `serve-orders`, `demo` |
+| **Data plane** (per run) | Browser login (authorize / token), WAT exchange, OBO token minting, JWKS-based verification | `https://signin.<region>.aliyuncs.com` (pre-release OAuth endpoints; production uses the sign-in login domain) and `agentidentitydata.<region>.aliyuncs.com` (RPC) | OAuth2 + `2025-11-27` | `login`, `exchange-wat`, `obo`, `serve-orders`, `demo` |
 
 Responsibilities:
 
@@ -108,7 +108,10 @@ the relevant claims after `obo`:
   order service uses it to decide whose orders to return.
 - `iss` / `aud` — the token is **issued by the IDaaS instance** and addressed
   to the **order-service application** (the audience configured as
-  `ORDER_SERVICE_AUDIENCE`, shaped `agent-<outbound-app-clientId>`).
+  `ORDER_SERVICE_AUDIENCE`: the enterprise app's **own audience identifier**
+  from its IDaaS detail page, e.g. `test-aud` — **not** the OBO provider's
+  OutboundAudience, `agent-…` form; passing the latter fails with
+  `Forbidden.IdaasRsNotAuthorized`, verified in Singapore production).
 - `act.sub` — **the actual actor: the Workload Identity ARN**. The token says
   "the workload identity (the agent) is acting on behalf of the user in
   `sub`". This is the core of on-behalf-of: an agent can call downstream
@@ -141,8 +144,8 @@ is the most common configuration error:
 
 | Surface | Correct domain | Wrong-but-tempting alternative |
 |---|---|---|
-| authorize / token exchange | `https://signin.<region>.aliyuncs.com/{USER_POOL_ID}/oauth2/authorize` and `/oauth2/token` (`SIGNIN_BASE_URL`) | `agentidentitydata` domain (no OAuth endpoints there) |
-| Pool discovery / JWKS | `https://{DATA_ENDPOINT}/{USER_POOL_ID}/.well-known/openid-configuration` and `https://{DATA_ENDPOINT}/{USER_POOL_ID}/oauth2/jwks` | the signin domain |
+| authorize / token exchange | `https://signin.<region>.aliyuncs.com/{USER_POOL_ID}/oauth2/authorize` and `/oauth2/token` (`SIGNIN_BASE_URL`; production uses the sign-in login domain, e.g. `https://signin-<region>.aliyunagentid.com`) | `agentidentitydata` domain (no OAuth endpoints there) |
+| Pool discovery / JWKS | pre-release: `https://{DATA_ENDPOINT}/{USER_POOL_ID}/.well-known/openid-configuration` and `.../oauth2/jwks`; production (Singapore `ap-southeast-1`): the **sign-in domain** with the same paths — configure `POOL_JWKS_BASE` accordingly (the data-plane path returns 404 there) | assuming one host fits every environment |
 | WAT / OBO RPC | `agentidentitydata.<region>.aliyuncs.com` | the control-plane `agentidentity` domain |
 | Control-plane RPC (setup/cleanup) | `agentidentity.<region>.aliyuncs.com` | the data-plane domain |
 
@@ -157,6 +160,16 @@ Additional gotchas confirmed in pre-release testing:
   `ORDER_SERVICE_JWKS_URI`) come from the **IDaaS (EIAM) discovery document**,
   not from the pool discovery: `GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration`
   and use its `issuer` / `jwks_uri` fields (both publicly reachable).
+- Environment variance (verified in Singapore `ap-southeast-1` production,
+  2026-08): the sign-in domain takes the form
+  `https://signin-<region>.aliyunagentid.com` (pre-release:
+  `pre-signin-<region>.alibabacloudagentid.com`), and pool discovery/JWKS are
+  served on the sign-in domain rather than the data endpoint — hence the
+  optional `POOL_JWKS_BASE` knob in `.env` (empty = data endpoint, the
+  pre-release default). The OBO `Audience` must be the enterprise app's own
+  audience identifier (e.g. `test-aud`), not the provider's OutboundAudience.
+  See the README section "Region/environment differences" for the full
+  checklist and the token-lifetime table.
 
 ## Zero-dependency RPC V1 signing
 

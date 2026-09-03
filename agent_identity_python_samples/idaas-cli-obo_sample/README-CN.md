@@ -92,15 +92,16 @@ chmod 600 .env
 | `ALIYUN_SECURITY_TOKEN` | （可选）STS | 使用临时凭证时填写 |
 | `CONTROL_ENDPOINT` | —（通用形态） | 控制面端点，`agentidentity.<region>.aliyuncs.com` |
 | `DATA_ENDPOINT` | —（通用形态） | 数据面端点，`agentidentitydata.<region>.aliyuncs.com` |
-| `SIGNIN_BASE_URL` | 用户池详情页 | 池 OAuth 登录根地址，`https://signin.<region>.aliyuncs.com` |
+| `SIGNIN_BASE_URL` | 用户池详情页 | 池 OAuth 登录根地址，如 `https://signin.<region>.aliyuncs.com`（预发）或正式环境的登录域 |
+| `POOL_JWKS_BASE` | （可选） | 池 discovery / JWKS 的域名根。默认（留空）走 `DATA_ENDPOINT`（预发行为）；若所在环境的池 discovery/JWKS 走登录域（如新加坡 `ap-southeast-1` 正式环境，数据面同路径 404），填登录域地址，可与 `SIGNIN_BASE_URL` 相同。 |
 | `USER_POOL_ID` | setup 产出 / 控制台 | 用户池 ID（`up_...`） |
 | `OAUTH_CLIENT_ID` | setup 产出 / 控制台 | 池 OAuth 客户端 ID（`client_...`） |
 | `OAUTH_CLIENT_SECRET` | setup 产出 / 控制台 | 池 OAuth 客户端密钥（也可用 `OAUTH_CLIENT_SECRET_FILE` 指向 0600 文件） |
 | `OAUTH_REDIRECT_URI` | — | 回调地址，默认 `http://127.0.0.1:8765/callback` |
 | `WI_NAME` | setup 产出 / 控制台 | 工作负载身份名——必须开启会话绑定 |
 | `OBO_PROVIDER_NAME` | setup 产出 / 控制台 | 出站 OAuth2 凭证提供商名 |
-| `ORDER_SERVICE_AUDIENCE` | IDaaS 控制台 → 订单服务应用 | 受众，形态 `agent-<出站应用clientId>` |
-| `ORDER_SERVICE_SCOPES` | —（可选） | 逗号分隔，默认 `read,write.all` |
+| `ORDER_SERVICE_AUDIENCE` | IDaaS 控制台 → 该企业服务应用详情页 | **企业服务应用自身的 audience 标识**（如 `test-aud` 这类值）；**不是** OBO provider 的 OutboundAudience（`agent-…` 形态）——误传将报 `Forbidden.IdaasRsNotAuthorized`（正式环境实测） |
+| `ORDER_SERVICE_SCOPES` | —（可选） | 逗号分隔，默认 `read,write.all`；必须是目标应用**已授权 scope 的子集**——超出报 `Forbidden.ScopeNotGranted`（正式环境实测，排查时逐个删减做最小化实验） |
 | `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | IDaaS discovery 文档 | `GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` 返回的 `issuer` / `jwks_uri`（公网可达） |
 | `SETUP_*` | —（仅模式 B） | `setup --mode=script` 的资源命名与 provider 配置，见 `env.template` 注释 |
 
@@ -122,8 +123,10 @@ chmod 600 .env
 4. 创建池 OAuth 客户端；redirect_uri 白名单必须包含 loopback 条目
    `http://127.0.0.1:8765/callback` → 记录 `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`。
 5. 先在 IDaaS 侧创建订单服务企业应用，再在 Agent Identity 侧创建 OAuth2
-   凭证提供商（厂商 IDaaS、类型 ON_BEHALF_OF）→ 记录 `OBO_PROVIDER_NAME` /
-   `ORDER_SERVICE_AUDIENCE`。
+   凭证提供商（厂商 IDaaS、类型 ON_BEHALF_OF）→ 记录 `OBO_PROVIDER_NAME`；
+   `ORDER_SERVICE_AUDIENCE` 取该企业服务应用**自身的 audience 标识**（应用
+   详情页，如 `test-aud`），**不是** provider 的 OutboundAudience（`agent-…`
+   形态，误传报 `Forbidden.IdaasRsNotAuthorized`）。
 6. 创建 IdentityProvider（discovery 指向本池）与 WorkloadIdentity（**务必开启会话绑定**）
    → 记录 `WI_NAME` 及 IDaaS discovery 里的订单服务 issuer/JWKS。
 
@@ -138,17 +141,20 @@ python3 sample.py setup --mode=script          # --with-scim 仅打印 SCIM 配�
 全部成功才把产出回写 `.env`（0600、原子替换）。中途失败不会写入半份
 `.env`——按报错指引处理后重跑即可，已完成步骤会自动跳过。
 
-**已知限制（预发实测的诚实说明）**：`SetSpecificIdentityProvider` 的 CLI
-帮助当前仅标注支持 **DingTalk** 类型；若脚本绑定 IDaaS 报
-`InvalidParameter`，请单独在控制台完成该步绑定（方式一第 2 步）后重跑
-setup，其余步骤会接着跑。另外：`SETUP_OBO_PROVIDER_CONFIG`（指向 IDaaS
+**已知限制（预发 + 新加坡正式环境实测的诚实说明）**：`SetSpecificIdentityProvider`
+的 CLI 帮助当前仅标注支持 **DingTalk** 类型（正式环境实测该 API 仅接受
+DingTalk / Feishu / WeCom，**IDaaS 类型无 API，必须控制台人工绑定**）。脚本
+绑定 IDaaS 报 `InvalidParameter` 时会打印兑底指引并继续后续步骤；请在控制台
+完成该步绑定（方式一第 2 步）后重跑 setup（幂等），其余步骤会接着跑。另外：
+`SETUP_OBO_PROVIDER_CONFIG`（指向 IDaaS
 订单服务应用的 JSON 配置）需提前填好；凭证提供商**配额 = 1**（已存在则复用）。
 
 **脚本回写什么——以及不回写什么**：脚本只回写其创建的资源（`USER_POOL_ID`、
 `OAUTH_CLIENT_ID`、`OAUTH_CLIENT_SECRET`、`WI_NAME`、`OBO_PROVIDER_NAME`）。
-`SIGNIN_BASE_URL`、`ORDER_SERVICE_AUDIENCE`、`ORDER_SERVICE_ISSUER` 与
-`ORDER_SERVICE_JWKS_URI` 仍需你按上文表格自行补齐（后三项需先在 IDaaS 侧
-创建订单服务应用——见方式一第 5/6 步）。跑 demo 前先执行
+`SIGNIN_BASE_URL`、`POOL_JWKS_BASE`（正式环境需要时）、`ORDER_SERVICE_AUDIENCE`、
+`ORDER_SERVICE_ISSUER` 与 `ORDER_SERVICE_JWKS_URI` 仍需你按上文表格自行补齐
+（`ORDER_SERVICE_*` 三项需先在 IDaaS 侧创建订单服务应用——见方式一第 5/6 步；
+audience 注意别填成 provider 的 OutboundAudience）。跑 demo 前先执行
 `python3 sample.py --check` 确认配置齐备。
 
 ### SCIM（v1 不在范围内）
@@ -232,13 +238,13 @@ python3 sample.py obo
 
 ```
 [obo] 调用 GetResourceOAuth2Token（OAuth2Flow=ON_BEHALF_OF）…
-      Provider=idaas-obo-sample-provider Audience=agent-<出站应用clientId> Scopes=["read", "write.all"]
+      Provider=idaas-obo-sample-provider Audience=<企业服务应用 audience，如 test-aud> Scopes=["read", "write.all"]
       契约：业务参数必须全部放 formData body（Scopes 传 JSON 数组字符串，禁止逐个传参）
 [obo] 成功（RequestId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）：订单服务 AT 已落盘（eyJhbGci…(len=1498)）
 [obo] 订单服务 RT 已落盘（eyJhbGci…(len=743)）；刷新令牌仅作演示，sample 不实现刷新流程
 [obo] AT claims（on-behalf-of 委托语义）：
         iss     = https://<your-eiam-instance>…（令牌由 IDaaS 签发）
-        aud     = agent-<出站应用clientId>（受众=订单服务应用）
+        aud     = <企业服务应用 audience，如 test-aud>（受众=订单服务应用）
         scope   = read write.all
         sub     = user_xxxxxxxx…（主体=登录员工）
         act.sub = acs:agentidentity:<region>:<account-id>:workloadidentitydirectory/default/workloadidentity/idaas-obo-sample-wi
@@ -302,6 +308,27 @@ redirect_uri 白名单忽略 loopback 端口差异，无需改控制台配置：
 想看到「本人订单」，把登录后打印的真实 `sub` 映射进
 `orders/mock_data.py`（如 `SUB_ALIAS = {"user_xxxxxxxx…": "employee-alice"}`），
 或直接换一个账号重跑 `demo`。
+
+### 🌏 区域/环境差异与令牌时效（正式环境实测）
+
+以下差异来自新加坡 `ap-southeast-1` 正式环境（2026-08）端到端闭环实测；预发
+环境保持本文默认描述不变：
+
+| 事项 | 预发环境 | 正式环境（如新加坡 `ap-southeast-1`） |
+|---|---|---|
+| 登录域 `SIGNIN_BASE_URL` | `https://signin.<region>.aliyuncs.com` 形态 | `https://signin-<region>.aliyunagentid.com`（连字符 + `aliyunagentid.com`；预发为 `pre-signin-<region>.alibabacloudagentid.com`）；一律以用户池详情页展示的地址为准 |
+| 池 discovery / JWKS | 走 `DATA_ENDPOINT` 数据面域（`POOL_JWKS_BASE` 留空即默认） | 走**登录域**（数据面同路径 404）——`POOL_JWKS_BASE` 必须填登录域（可与 `SIGNIN_BASE_URL` 相同） |
+| 入站 IDaaS 身份源绑定 | 控制台操作（API 仅 DingTalk / Feishu / WeCom 类型可配置） | 同样必须控制台人工；另需在 **IDaaS 侧入站应用的回跳白名单**中加入 `https://signin-<region>.aliyunagentid.com/<poolId>/sso/oidc/callback` |
+| OBO audience / scope | — | `ORDER_SERVICE_AUDIENCE` = 企业服务应用自身的 audience 标识（如 `test-aud`，非 provider 的 OutboundAudience）；`ORDER_SERVICE_SCOPES` 必须是其已授权 scope 的子集（见上文表格） |
+| 数据面 RPC 稳定性 | 滚动发布窗口偶发 `MissingParameter.*`（sample 自动重试穿透） | 新旧实例混布，偶发 `MissingParameter.Audience` 多为旧实例误导性报错或 WAT 已过期——重试穿透 / 换新 WAT 后看真实错误码 |
+
+令牌时效（正式环境实测；分步调试按此规划节奏）：
+
+| 令牌 | 有效期 | 使用要点 |
+|---|---|---|
+| id_token（池 ID Token） | 约 1 小时 | 过期后重走 `login`；浏览器 SSO 会话仍在时无需重新交互 |
+| WAT | 约 5 分钟 | `exchange-wat` 后**立即**执行 `obo`（`demo` 已自动衔接） |
+| 订单服务 AT（OBO 产物） | 约 20 分钟，**无 refresh_token** | 到期重走 `exchange-wat` → `obo`；id_token 有效期内免重新登录 |
 
 ## ✅ Verification（验证）
 
