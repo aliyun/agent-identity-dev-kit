@@ -156,7 +156,9 @@ docs/control-plane-console.md，含每步的入口路径与 CLI 等价命令）�
 5. 注册出站资源（订单服务应用）
    先在 IDaaS 侧创建企业服务应用（模拟订单服务），再回到 Agent Identity 控制台
    创建 OAuth2 凭证提供商（厂商选 IDaaS、类型 ON_BEHALF_OF，配置指向该应用）。
-   → 记录 OBO_PROVIDER_NAME 与 ORDER_SERVICE_AUDIENCE（形态 agent-<出站应用clientId>）
+   → 记录 OBO_PROVIDER_NAME 与 ORDER_SERVICE_AUDIENCE（取 IDaaS 控制台该企业
+     服务应用详情页的 audience 标识，如 test-aud；不是 provider 的
+     OutboundAudience agent-… 形态，误传报 Forbidden.IdaasRsNotAuthorized）
    （CLI 等价：aliyun agentidentity create-oauth2-credential-provider，配额=1）
 
 6. 创建工作负载身份（OBO 委托主体）并记录令牌验签源
@@ -227,7 +229,13 @@ def _ensure_pool(config: Dict[str, str], logger) -> Tuple[str, str, bool]:
 
 
 def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
-    """步骤 2：绑定 IDaaS 身份源（SetSpecificIdentityProvider）并轮询至 SSOStatus=Enabled。"""
+    """步骤 2：绑定 IDaaS 身份源（SetSpecificIdentityProvider）并轮询至 SSOStatus=Enabled。
+
+    兑底（新加坡正式环境实测）：SetSpecificIdentityProvider 仅接受
+    DingTalk/Feishu/WeCom（InvalidParameter.IdentityProviderType）——IDaaS 绑定只能走
+    控制台（模式 A 第 2 步）。此时打印兑底指引并继续后续步骤（客户端/IdP/WI
+    与入站绑定无依赖），否则 setup 会在第 2 步中断，剩余资源全部无法创建。
+    """
     idp_type = config.get("SETUP_IDP_TYPE", "IDaaS")
     metadata_raw = config.get("SETUP_IDP_METADATA", "")
     params: Dict[str, Any] = {
@@ -240,7 +248,17 @@ def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
             params["IdPMetadata"] = json.loads(metadata_raw)
         except ValueError:
             params["IdPMetadata"] = metadata_raw  # 非 JSON 则按字符串透传
-    resp = _call(config, "SetSpecificIdentityProvider", params, logger=logger)
+    try:
+        resp = _call(config, "SetSpecificIdentityProvider", params, logger=logger)
+    except SetupError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, rpc.RpcError) and cause.code.startswith("InvalidParameter"):
+            _log("[FALLBACK] SetSpecificIdentityProvider 被拒（{}）：".format(cause))
+            _log("        入站 IDaaS 绑定请改用控制台完成（模式 A 第 2 步：用户池设置 →")
+            _log("        身份源 → IDaaS，填 IDaaS 侧应用 clientId/私钥）；绑定完成后重跑")
+            _log("        setup --mode=script（幂等）即可。继续创建后续资源 …")
+            return
+        raise
     _log("[CREATE] 绑定身份源 type={}（RequestId={}）".format(idp_type, resp.get("RequestId", "-")))
     if idp_type != "DingTalk":
         _log("        注意：CLI 帮助标注该接口当前仅支持 DingTalk；IDaaS 类型若被拒绝，")
@@ -380,6 +398,11 @@ def _ensure_client(
         client_name, client_id, resp.get("RequestId", "-")
     ))
     secret = _first(resp, "ClientSecret", "Secret", nested=("UserPoolClient", "Client"), default="")
+    if isinstance(secret, dict):
+        # 形态 {"ClientSecret": {...}}：dict 值再取一层候选键（含 ClientSecretValue：
+        # 新加坡正式环境实测 CreateClientSecret 返回
+        # {"ClientSecret": {"ClientSecretValue": ...}}，旧候选键未覆盖导致密钥丢失）
+        secret = _first(secret, "ClientSecretValue", "ClientSecret", "Secret", default="")
     if not secret:
         # 密钥客户端需单独创建密钥
         resp = _call(
@@ -390,10 +413,28 @@ def _ensure_client(
         )
         secret = _first(resp, "ClientSecret", "Secret", nested=("ClientSecret", "UserPoolClient"), default="")
         if isinstance(secret, dict):
-            # 形态 {"Secret": {"ClientSecret": "..."}}：dict 值再取一层候选键
-            secret = _first(secret, "ClientSecret", "Secret", default="")
+            # 形态 {"Secret": {"ClientSecret": "..."}}：dict 值再取一层候选键；
+            # ClientSecretValue 优先（新加坡正式环境实测响应形态）
+            secret = _first(secret, "ClientSecretValue", "ClientSecret", "Secret", default="")
         _log("[CREATE] 客户端密钥（RequestId={}）".format(resp.get("RequestId", "-")))
     return client_id, secret, True
+
+
+def _pool_wellknown_host(config: Dict[str, str]) -> str:
+    """池 discovery / JWKS 的域名根（不含 scheme）。
+
+    预发实测：池 discovery 走 DATA_ENDPOINT 公网路径；但部分正式环境（如新加坡
+    ap-southeast-1）池 discovery/JWKS 改走登录域，数据面同路径 404。因此支持
+    可配置项 POOL_JWKS_BASE（填登录域，含/不含 https:// 前缀均可），留空则保持
+    原默认行为（DATA_ENDPOINT）——向后兼容。
+    """
+    base = (config.get("POOL_JWKS_BASE") or "").strip()
+    if env_mod.is_placeholder(base):
+        base = ""
+    if not base:
+        return config["DATA_ENDPOINT"]
+    host = base.split("://")[-1].rstrip("/")
+    return host
 
 
 def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger) -> Tuple[str, bool]:
@@ -410,7 +451,7 @@ def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger) -> T
         if not _entity_not_exists(exc):
             raise
     discovery_url = "https://{}/{}/.well-known/openid-configuration".format(
-        config["DATA_ENDPOINT"], pool_id
+        _pool_wellknown_host(config), pool_id
     )
     resp = _call(
         config,
@@ -639,7 +680,11 @@ def run_setup_script(config: Optional[Dict[str, str]] = None, with_scim: bool = 
     else:
         _log("[setup] 本次未新建资源（全部复用），资源清单保持不变：{}".format(_manifest_path()))
     _log("[setup] 还需手动确认 .env：SIGNIN_BASE_URL / ORDER_SERVICE_AUDIENCE / ")
-    _log("        ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI（见 env.template 注释的取值方法），")
+    _log("        ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI（见 env.template 注释的取值方法）。")
+    _log("        ⚠️ ORDER_SERVICE_AUDIENCE 取「IDaaS 控制台该企业服务应用详情页的")
+    _log("        audience 标识」（如 test-aud），不是 OBO provider 的 OutboundAudience")
+    _log("        （agent-… 形态，误传报 Forbidden.IdaasRsNotAuthorized）；正式环境另需")
+    _log("        确认 POOL_JWKS_BASE 与登录域取值（见 README「区域/环境差异」一节），")
     _log("        然后运行：python3 sample.py --check → python3 sample.py login")
     return updates
 

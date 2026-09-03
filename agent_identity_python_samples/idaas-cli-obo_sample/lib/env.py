@@ -51,9 +51,15 @@ ENV_SCHEMA = {
     "SIGNIN_BASE_URL": (
         True,
         "服务端点",
-        "池 OAuth 登录根地址，形态 https://signin.<region>.aliyuncs.com；"
-        "控制台用户池详情页展示的地址为准。token 兑换走此域名，"
-        "discovery/JWKS 走 DATA_ENDPOINT（双域名坑）。",
+        "池 OAuth 登录根地址，形态因环境而异（如 https://signin.<region>.aliyuncs.com "
+        "或正式环境的登录域）；控制台用户池详情页展示的地址为准。token 兑换走此域名。",
+    ),
+    "POOL_JWKS_BASE": (
+        False,
+        "服务端点",
+        "可选：池 discovery / JWKS 的域名根。默认（留空）走 DATA_ENDPOINT（预发行为）；"
+        "若所在环境的池 discovery/JWKS 走登录域（如新加坡 ap-southeast-1 正式环境），"
+        "填登录域完整地址（如 https://signin-<region>.xxx，可与 SIGNIN_BASE_URL 相同）。",
     ),
     # ---- 管控面产出 ----
     "USER_POOL_ID": (
@@ -101,7 +107,9 @@ ENV_SCHEMA = {
     "ORDER_SERVICE_AUDIENCE": (
         True,
         "订单服务",
-        "订单服务受众，形态 agent-<出站应用clientId>：IDaaS 控制台订单服务应用详情页。",
+        "订单服务受众：IDaaS 控制台该企业服务应用详情页的 audience 标识"
+        "（如 test-aud）；不是 OBO provider 的 OutboundAudience（agent-… 形态），"
+        "误传报 Forbidden.IdaasRsNotAuthorized。",
     ),
     "ORDER_SERVICE_SCOPES": (
         False,
