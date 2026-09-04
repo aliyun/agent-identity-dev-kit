@@ -1,0 +1,67 @@
+{
+  "APIG_CREATE_GATEWAY_BODY_JSON": {
+    "name": "agent-ai-gateway-demo",
+    "gatewayType": "AI",
+    "chargeType": "POSTPAY",
+    "spec": "apigw.small.x1",
+    "networkAccessConfig": {
+      "type": "Internet"
+    }
+  },
+  "APIG_CREATE_SERVICE_BODY_JSON": {
+    "sourceType": "DNS",
+    "serviceConfigs": [
+      {
+        "name": "agentidentitydata",
+        "addresses": [
+          "agentidentitydata-vpc.cn-beijing.aliyuncs.com"
+        ]
+      }
+    ]
+  },
+  "APIG_CREATE_MCP_SERVER_BODY_JSON": {
+    "name": "agent-mcp-demo",
+    "description": "MCP server for end-to-end sample",
+    "type": "RealMCP",
+    "protocol": "HTTP",
+    "exposedUriPath": "/mcp",
+    "backend": {
+      "scene": "SingleService",
+      "services": [
+        {
+          "serviceId": "svc-please-replace",
+          "protocol": "HTTP",
+          "port": 80,
+          "weight": 100
+        }
+      ]
+    }
+  },
+  "APIG_CREATE_POLICY_BODY_JSON": {
+    "name": "agent-cedar-policy-demo",
+    "className": "AIGuard",
+    "description": "Cedar policy for MCP authorization",
+    "config": "{\"version\":\"1\",\"statements\":[{\"effect\":\"deny\",\"action\":\"*\",\"resource\":\"*\"}]}"
+  },
+  "APIG_POLICY_ATTACHMENT_BODY_JSON": {
+    "attachResourceType": "GatewayService",
+    "attachResourceId": "svc-please-replace",
+    "gatewayId": "gw-please-replace",
+    "policyId": "pl-please-replace"
+  },
+  "APIG_INSTALL_PLUGIN_BODY_JSON": {
+    "gatewayIds": [
+      "gw-please-replace"
+    ],
+    "pluginClassId": "pc-please-replace"
+  },
+  "APIG_PLUGIN_ATTACHMENT_BODY_JSON": {
+    "gatewayId": "gw-please-replace",
+    "pluginId": "p-please-replace",
+    "attachResourceType": "Gateway",
+    "attachResourceIds": [
+      "gw-please-replace"
+    ],
+    "enable": true
+  }
+}
