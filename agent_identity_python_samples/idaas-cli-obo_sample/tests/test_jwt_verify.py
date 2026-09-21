@@ -6,6 +6,7 @@
 
 import base64
 import hashlib
+import io
 import json
 import os
 import random
@@ -328,6 +329,61 @@ class TestTokenVerifierBranches(unittest.TestCase):
         self.assertEqual(payload["sub"], "user_xxxxxxxx0001")
         self.assertEqual(signing_input.decode(), token.rsplit(".", 1)[0])
         self.assertTrue(signature)
+
+
+class TestTokenVerifierFailClosed(unittest.TestCase):
+    """D5：TokenVerifier 拒绝空 issuer/audience（从源头消除 fail-open）。
+
+    旧实现 verify() 用 ``if self.issuer:`` / ``if self.audience:`` 守卫——空串会让整段
+    claim 校验被静默跳过，任何由该 JWKS 签名、结构合法的令牌都会被接受
+    （issuer 混淆 / 跨租户令牌复用）。构造期即拒绝空值，逼迫调用方配置齐全。
+    """
+
+    def test_empty_issuer_rejected(self):
+        for bad in ("", "   ", None):
+            with self.assertRaises(ValueError):
+                TokenVerifier(issuer=bad, audience="aud-x",
+                              jwks_uri="https://jwks.example/keys")
+
+    def test_empty_audience_rejected(self):
+        for bad in ("", "   ", None):
+            with self.assertRaises(ValueError):
+                TokenVerifier(issuer="https://iss.example.com", audience=bad,
+                              jwks_uri="https://jwks.example/keys")
+
+    def test_non_empty_accepted(self):
+        v = TokenVerifier(issuer="https://iss.example.com", audience="aud-x",
+                          jwks_uri="https://iss.example.com/keys",
+                          fetch_func=lambda _u: {"keys": []})
+        self.assertEqual(v.issuer, "https://iss.example.com")
+        self.assertEqual(v.audience, "aud-x")
+
+
+class TestJwksCrossOriginWarning(unittest.TestCase):
+    """D12：显式 jwks_uri 与 issuer 不同源 → stderr 警告（不硬失败）。"""
+
+    def _construct(self, issuer, jwks_uri):
+        buf = io.StringIO()
+        with mock.patch.object(sys, "stderr", buf):
+            TokenVerifier(issuer=issuer, audience="aud-x", jwks_uri=jwks_uri,
+                          fetch_func=lambda _u: {"keys": []})
+        return buf.getvalue()
+
+    def test_cross_origin_warns(self):
+        out = self._construct("https://issuer.example.com/oauth2",
+                              "https://jwks.other.com/keys")
+        self.assertIn("[verify][WARN]", out)
+        self.assertIn("jwks.other.com", out)
+
+    def test_same_origin_silent(self):
+        out = self._construct("https://issuer.example.com/oauth2",
+                              "https://issuer.example.com/oauth2/jwks")
+        self.assertEqual(out, "")
+
+    def test_malformed_jwks_url_silent(self):
+        # 畸形 URL（无 host）→ 静默跳过（交 https 硬校验兜底），不抛
+        out = self._construct("https://issuer.example.com/oauth2", "not-a-url")
+        self.assertEqual(out, "")
 
 
 class TestScopeParsing(unittest.TestCase):

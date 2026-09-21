@@ -30,6 +30,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 
+from . import credentials
 from . import env as env_mod
 from . import rpc
 from . import tokens as tokens_mod
@@ -68,14 +69,12 @@ def require_config(config: Dict[str, str], keys: Tuple[str, ...]) -> None:
 
 
 def creds_from_env(config: Dict[str, str]) -> Tuple[str, str, Optional[str]]:
-    """从配置构造 RPC 凭证 (AK, SK, SecurityToken|None)。"""
-    require_config(config, ("ALIYUN_ACCESS_KEY_ID", "ALIYUN_ACCESS_KEY_SECRET"))
-    st = config.get("ALIYUN_SECURITY_TOKEN", "")
-    return (
-        config["ALIYUN_ACCESS_KEY_ID"],
-        config["ALIYUN_ACCESS_KEY_SECRET"],
-        st if st and not env_mod.is_placeholder(st) else None,
-    )
+    """从配置构造 RPC 凭证 (AK, SK, SecurityToken|None)。
+
+    薄封装：委托 ``credentials.resolve_creds(config)`` 三级降级链解析。
+    保留函数名与签名以减少调用点改动。
+    """
+    return credentials.resolve_creds(config)
 
 
 def client_secret_from_env(config: Dict[str, str]) -> str:
@@ -123,7 +122,10 @@ def rpc_error_hint(action: str, exc: rpc.RpcError) -> str:
     if code.startswith("EntityAlreadyExists"):
         return "资源已存在：sample 按名复用即可；provider 配额=1，如需重建先删旧再建"
     if code.startswith("InvalidAccessKeyId") or code.startswith("InvalidSecurityToken"):
-        return "AK/STS 凭证无效：检查 .env 的 ALIYUN_ACCESS_KEY_* 配置（注意 STS 时效）"
+        return (
+            "AK/STS 凭证无效：凭据可能来自 .env 显式值 / SDK 凭据链 / ~/.aliyun/config.json，"
+            "先用 `python3 sample.py --check` 确认命中哪一级"
+        )
     if code.startswith("Throttling"):
         return "触发限流：sample 已自动退避重试仍失败，稍等 1 分钟后重跑"
     return "携带 RequestId={} 与上述错误码排查；常见配置见 docs/troubleshooting.md".format(
@@ -445,7 +447,7 @@ def run_login(port: int = 8765, timeout: int = 300, config: Optional[Dict[str, s
 def run_exchange_wat(config: Optional[Dict[str, str]] = None) -> str:
     """数据面第 2 步：池 ID Token → WAT（GetWorkloadAccessTokenForJWT，query 风格）。"""
     config = env_mod.derive_defaults(config or env_mod.load_env())
-    require_config(config, ("DATA_ENDPOINT", "WI_NAME", "ALIYUN_ACCESS_KEY_ID", "ALIYUN_ACCESS_KEY_SECRET"))
+    require_config(config, ("DATA_ENDPOINT", "WI_NAME"))
     creds = creds_from_env(config)
 
     try:
@@ -511,8 +513,6 @@ def run_obo(config: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
             "DATA_ENDPOINT",
             "OBO_PROVIDER_NAME",
             "ORDER_SERVICE_AUDIENCE",
-            "ALIYUN_ACCESS_KEY_ID",
-            "ALIYUN_ACCESS_KEY_SECRET",
         ),
     )
     creds = creds_from_env(config)

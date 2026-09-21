@@ -8,6 +8,7 @@
 """
 
 import json
+import io
 import os
 import socket
 import sys
@@ -17,6 +18,7 @@ import unittest
 import urllib.error
 import urllib.request
 import http.client
+from unittest import mock
 
 SAMPLE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for path in (SAMPLE_DIR, os.path.dirname(os.path.abspath(__file__))):
@@ -341,6 +343,75 @@ class TestRequestBodyHandling(OrdersServerTestCase):
         status, payload = self._raw_post(str(2 * 1024 * 1024))
         self.assertEqual(status, 413)
         self.assertEqual(payload["error"], "request_too_large")
+
+
+class TestMakeServerFailClosed(unittest.TestCase):
+    """D5：make_server（verifier 缺省 = 独立部署路径）fail-closed + DiscoveryError 降级。
+
+    全程离线：patch env.load_env / derive_defaults / discovery.apply_discovery，
+    绝不读真实 .env、绝不触发网络。
+    """
+
+    def _make(self, base_config, apply_side_effect=None):
+        from lib import env as env_mod
+        from lib import discovery as disco_mod
+        from orders import server as server_mod
+
+        with mock.patch.object(env_mod, "load_env", return_value=dict(base_config)), \
+                mock.patch.object(env_mod, "derive_defaults", side_effect=lambda c: dict(c)), \
+                mock.patch.object(disco_mod, "apply_discovery",
+                                  side_effect=apply_side_effect or (lambda c: c)):
+            return server_mod.make_server(port=0)
+
+    def test_empty_issuer_refuses_startup(self):
+        cfg = {"ORDER_SERVICE_ISSUER": "", "ORDER_SERVICE_JWKS_URI": "https://x.example/keys",
+               "ORDER_SERVICE_AUDIENCE": "aud-x"}
+        with self.assertRaises(Exception) as ctx:
+            self._make(cfg)
+        self.assertIn("ORDER_SERVICE_ISSUER", str(ctx.exception))
+
+    def test_placeholder_jwks_refuses_startup(self):
+        cfg = {"ORDER_SERVICE_ISSUER": "https://iss.example.com",
+               "ORDER_SERVICE_JWKS_URI": "<YOUR_ORDER_SERVICE_JWKS_URI>",
+               "ORDER_SERVICE_AUDIENCE": "aud-x"}
+        with self.assertRaises(Exception) as ctx:
+            self._make(cfg)
+        self.assertIn("JWKS_URI", str(ctx.exception))
+
+    def test_empty_audience_refuses_startup(self):
+        cfg = {"ORDER_SERVICE_ISSUER": "https://iss.example.com",
+               "ORDER_SERVICE_JWKS_URI": "https://iss.example.com/keys",
+               "ORDER_SERVICE_AUDIENCE": ""}
+        with self.assertRaises(Exception) as ctx:
+            self._make(cfg)
+        self.assertIn("AUDIENCE", str(ctx.exception))
+
+    def test_discovery_error_degrades_then_fail_closed_on_empty(self):
+        """DiscoveryError 被降级为警告（不裸栈），但随后 issuer 仍空 → fail-closed。"""
+        from lib import discovery as disco_mod
+        cfg = {"ORDER_SERVICE_ISSUER": "", "ORDER_SERVICE_JWKS_URI": "",
+               "ORDER_SERVICE_AUDIENCE": "aud-x", "IDAAS_ORIGIN": "https://idaas.example.com"}
+
+        def boom(_c):
+            raise disco_mod.DiscoveryError("HTTP 503")
+
+        buf = io.StringIO()
+        with mock.patch.object(sys, "stderr", buf):
+            with self.assertRaises(Exception) as ctx:
+                self._make(cfg, apply_side_effect=boom)
+        self.assertIn("[orders][WARN]", buf.getvalue())  # discovery 失败降级为警告
+        self.assertIn("ORDER_SERVICE_ISSUER", str(ctx.exception))  # 但 issuer 空 → 拒绝启动
+
+    def test_valid_config_starts_server(self):
+        cfg = {"ORDER_SERVICE_ISSUER": "https://iss.example.com/oauth2",
+               "ORDER_SERVICE_JWKS_URI": "https://iss.example.com/oauth2/jwks",
+               "ORDER_SERVICE_AUDIENCE": "aud-x"}
+        server = self._make(cfg)
+        try:
+            self.assertIsNotNone(server.verifier)
+            self.assertEqual(server.verifier.issuer, "https://iss.example.com/oauth2")
+        finally:
+            server.server_close()
 
 
 if __name__ == "__main__":

@@ -14,10 +14,12 @@ import base64
 import hashlib
 import json
 import ssl
+import sys
 import threading
 import time
 import urllib.request
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlsplit
 
 try:
     # 复用 lib/rpc.py 的共享 SSL 上下文（含 certifi 兜底）：部分环境（如 macOS
@@ -59,6 +61,32 @@ def _b64url_decode(data: str) -> bytes:
         return base64.urlsafe_b64decode(padded.encode("ascii"))
     except Exception as exc:
         raise InvalidTokenError("base64url 解码失败：{}".format(exc)) from None
+
+
+def _warn_if_jwks_cross_origin(issuer: str, jwks_uri: str) -> None:
+    """纵深防御（D12）：显式配置的 ``jwks_uri`` 与 ``issuer`` 不同源时告警（不硬失败）。
+
+    discovery 路径已有同源守卫（``lib/discovery.get_issuer_jwks``：jwks_uri 的 netloc
+    必须等于 IDAAS_ORIGIN 的 netloc）；但若用户在 ``.env`` **显式**填
+    ``ORDER_SERVICE_JWKS_URI``，``apply_discovery`` 按「显式值优先」直接放行，本模块
+    仍会向该 URL 外呼。此处对 issuer/jwks_uri 的 host 做比对，不同源时打印一行
+    stderr 警告——**不硬失败**，避免误杀 jwks 与 issuer 确实分属不同合法域名的部署。
+    ``https`` 硬校验仍保留在 :func:`default_fetch_jwks`（此处只做同源提示）。
+
+    解析失败（畸形 URL）或任一 host 为空时静默跳过——交给 https 硬校验与 iss 校验兜底。
+    """
+    try:
+        iss_host = (urlsplit(issuer).hostname or "").lower()
+        jwks_host = (urlsplit(jwks_uri).hostname or "").lower()
+    except ValueError:
+        return
+    if not iss_host or not jwks_host or iss_host == jwks_host:
+        return
+    sys.stderr.write(
+        "[verify][WARN] ORDER_SERVICE_JWKS_URI 的 host（{}）与 issuer 的 host（{}）不同源："
+        "若这不是预期部署（jwks 与 issuer 分属不同合法域名），可能存在 issuer 混淆 / "
+        "SSRF 风险，请核对 .env 显式配置。\n".format(jwks_host, iss_host)
+    )
 
 
 def default_fetch_jwks(jwks_uri: str, timeout: int = 10) -> Dict[str, Any]:
@@ -206,10 +234,32 @@ class TokenVerifier:
         fetch_func: Optional[Callable[[str], Dict[str, Any]]] = None,
         leeway: int = CLOCK_SKEW_SECONDS,
     ):
-        self.issuer = issuer
-        self.audience = audience
-        self.jwks = JwksCache(jwks_uri, fetch_func=fetch_func)
+        # D5 fail-closed（从源头消除 fail-open）：空 issuer/audience 会让 verify()
+        # 的 `if self.issuer:` / `if self.audience:` 整段 claim 校验被静默跳过——
+        # 任何由该 JWKS 签名、结构合法的令牌都会被接受（issuer 混淆 / 跨租户令牌
+        # 复用）。故在构造时即拒绝空值，逼迫调用方在配置齐全后才建 verifier。
+        # （orders/ 可独立部署，无 lib，故用标准 ValueError 而非 FlowError；
+        #  server.py:make_server 会在构造前用 FlowError 给出更友好的启动期错误。）
+        if not issuer or not str(issuer).strip():
+            raise ValueError(
+                "TokenVerifier 拒绝空 issuer：空值会让 verify() 静默跳过 iss 校验"
+                "（fail-open）。请填写 ORDER_SERVICE_ISSUER，或填 IDAAS_ORIGIN 让 "
+                "discovery 自动回填。"
+            )
+        if not audience or not str(audience).strip():
+            raise ValueError(
+                "TokenVerifier 拒绝空 audience：空值会让 verify() 静默跳过 aud 校验"
+                "（fail-open）。请填写 ORDER_SERVICE_AUDIENCE。"
+            )
+        # S5：校验通过后存 strip 归一值——JWT 的 iss/aud 声明比较是严格字符串
+        # 全等，配置侧的首尾空白（手抄/回写带入）会让合法令牌恒验失败且难排查；
+        # jwks_uri 同理先 strip 再交给 JwksCache（URL 两端空白会直接拼进外呼请求）。
+        self.issuer = str(issuer).strip()
+        self.audience = str(audience).strip()
+        self.jwks = JwksCache(str(jwks_uri).strip(), fetch_func=fetch_func)
         self.leeway = leeway
+        # D12：显式 jwks_uri 与 issuer 不同源时告警（不硬失败，见函数 docstring）。
+        _warn_if_jwks_cross_origin(issuer, jwks_uri)
 
     def verify(self, token: str) -> Dict[str, Any]:
         """验签并校验 claims。全部通过返回 payload（claims dict）。"""

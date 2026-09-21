@@ -12,6 +12,7 @@
 """
 
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
@@ -27,6 +28,13 @@ try:
 except ImportError:  # pragma: no cover - orders 独立部署场景
     FlowError = None  # type: ignore[assignment,misc]
 
+try:
+    # discovery 懒触发：若 ORDER_SERVICE_ISSUER/JWKS_URI 空且 IDAAS_ORIGIN 非空，拉 OIDC discovery 回填。
+    # orders/ 被单独拷走部署（无 lib 包）时跳过 discovery，依赖显式 issuer/jwks。
+    from lib import discovery as _discovery
+except ImportError:  # pragma: no cover - orders 独立部署场景
+    _discovery = None  # type: ignore[assignment]
+
 HOST = "127.0.0.1"
 DEFAULT_PORT = 9090
 
@@ -39,6 +47,14 @@ def mask_token(token: str) -> str:
     if not token:
         return "<empty>"
     return "{}…(len={})".format(token[:8], len(token))
+
+
+def _startup_error(message: str) -> Exception:
+    """订单服务启动期错误：优先 FlowError（sample.py main 统一捕获），
+    orders/ 独立部署（无 lib）时回退 RuntimeError。"""
+    if FlowError is not None:
+        return FlowError(message)
+    return RuntimeError(message)  # pragma: no cover - orders 独立部署场景
 
 
 def authenticate(
@@ -266,11 +282,52 @@ def make_server(
     if verifier is None:
         from lib import env as env_mod
 
-        config = env_mod.derive_defaults(env_mod.load_env())
+        # D5(3)：独立部署（不经 sample.py）时 derive_defaults 可能因非法 ENVIRONMENT
+        # 抛 env.EnvError；转成清晰错误消息，不裸栈。
+        try:
+            config = env_mod.derive_defaults(env_mod.load_env())
+        except env_mod.EnvError as exc:
+            raise _startup_error(
+                "订单服务启动失败：环境配置非法（{}）。\n"
+                "→ 检查 .env 的 ENVIRONMENT 取值（production / pre-release）及其余配置项；"
+                "可先运行 python3 sample.py --check 定位。".format(exc)
+            ) from None
+        # discovery 懒触发：长驻进程内存 TTL 缓存收益最大。
+        # D5(1)：与 setup 语义对齐——DiscoveryError 降级为警告后继续（保住「起得来、
+        # 按请求报 503」的既有降级行为），绝不让本地 mock 服务连 /health 都起不来。
+        if _discovery is not None:
+            try:
+                config = _discovery.apply_discovery(config)
+            except _discovery.DiscoveryError as exc:
+                sys.stderr.write(
+                    "[orders][WARN] OIDC discovery 回填 issuer/jwks 失败（{}）——"
+                    "将沿用 .env 现有值继续启动（JWKS 不可达时按请求降级为 503）。\n".format(exc)
+                )
+        # D5(2) fail-closed：空/占位 issuer 或 jwks_uri 会让 TokenVerifier 静默跳过
+        # iss 校验（fail-open，接受任何该 JWKS 签名、aud 匹配的令牌）。拒绝启动，给出两条出路。
+        # （对照 sample.py:run_demo 在 apply_discovery 后补的 flow.require_config 对称守卫。）
+        issuer = config.get("ORDER_SERVICE_ISSUER", "")
+        jwks_uri = config.get("ORDER_SERVICE_JWKS_URI", "")
+        audience = config.get("ORDER_SERVICE_AUDIENCE", "")
+        if env_mod.is_placeholder(issuer) or env_mod.is_placeholder(jwks_uri):
+            raise _startup_error(
+                "订单服务拒绝启动：ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI 为空或占位。\n"
+                "空 issuer 会让验签静默跳过 iss 校验（任何由该 JWKS 签名、aud 匹配的令牌"
+                "都会被接受，存在 issuer 混淆 / 跨租户令牌复用风险），故 fail-closed。\n"
+                "→ 出路 A：在 .env 填 IDAAS_ORIGIN，让 discovery 自动回填 issuer/jwks_uri；\n"
+                "→ 出路 B：在 .env 显式填齐 ORDER_SERVICE_ISSUER 与 ORDER_SERVICE_JWKS_URI。"
+            )
+        if env_mod.is_placeholder(audience):
+            raise _startup_error(
+                "订单服务拒绝启动：ORDER_SERVICE_AUDIENCE 为空或占位。\n"
+                "空 audience 会让验签静默跳过 aud 校验（fail-open）。\n"
+                "→ 在 .env 填写 ORDER_SERVICE_AUDIENCE（取 IDaaS 控制台该企业服务应用"
+                "详情页的 audience 标识，如 test-aud）。"
+            )
         verifier = TokenVerifier(
-            issuer=config.get("ORDER_SERVICE_ISSUER", ""),
-            audience=config.get("ORDER_SERVICE_AUDIENCE", ""),
-            jwks_uri=config.get("ORDER_SERVICE_JWKS_URI", ""),
+            issuer=issuer,
+            audience=audience,
+            jwks_uri=jwks_uri,
         )
     try:
         server = ThreadingHTTPServer((host, port), OrdersHandler)

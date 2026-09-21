@@ -22,6 +22,8 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from . import credentials
+from . import discovery
 from . import env as env_mod
 from . import rpc
 from . import tokens as tokens_mod
@@ -31,6 +33,69 @@ CONTROL_API_VERSION = "2025-09-01"
 # SSO 编排轮询参数
 SSO_POLL_INTERVAL = 10
 SSO_POLL_TIMEOUT = 600
+
+# 凭据解析器 TTL（秒）：setup 含最长 SSO_POLL_TIMEOUT=600s 的轮询、整轮可达十几分钟，
+# 期间 STS 可能到期。TTL 内复用缓存三元组（SDK 侧本身有 reuse_last_provider_enabled
+# 缓存，命中成本极低），过期则重新解析，让 SDK 的 OAuth 自动刷新与标准库的
+# sts_expiration 复检重新生效，避免中途 InvalidSecurityToken.Expired 让 setup 失败。
+CREDS_RESOLVER_TTL = 300.0
+
+
+def _mask_ak(ak: str) -> str:
+    """AK 掩码回显：最多前 4 字符（``LTAI``/``STS.`` 形态前缀）+ 长度。
+
+    安全红线：绝不打印 8 位或完整 AK（会进 CI 日志、常被整段贴进 issue）。
+    与 ``env.render_check_report`` / ``sample.py --check`` 的掩码策略保持一致。
+    """
+    if not ak:
+        return "<空>"
+    return "{}…(len={})".format(ak[:4], len(ak))
+
+
+class _CredsResolver:
+    """轻量凭据解析器：TTL 内复用缓存三元组，过期/首次则重新调 ``resolve_creds``。
+
+    替代旧的模块级全局 ``_ACTIVE_CREDS``——后者缓存的是「解析结果快照」而非「解析
+    能力」，会让 setup 长跑期间 SDK 的 OAuth 自动刷新与标准库的 sts_expiration 复检
+    全被短路；且模块级全局无隔离，setup 运行期间同进程任何其他 ``_call`` 都会静默
+    复用 setup 的身份。本解析器：
+
+    - **显式传参、无模块级状态**：setup（``_run_setup_script_inner``）与 cleanup
+      （``_run_deletes``）两条路径共用同一机制，身份新鲜度语义一致；
+    - **TTL 缓存**：``ttl`` 内复用（避免 ~10 次 _call 各解析一次），过期重新解析
+      （让到期刷新语义生效）；
+    - **失败不残留状态**：``resolve_creds`` 抛 ``CredentialError`` 时不写缓存，
+      首次即失败则 ``_cached`` 保持 ``None``；
+    - ``clock`` / ``resolve_func`` 可注入，便于单测控制 TTL 而不必真 sleep。
+    """
+
+    def __init__(
+        self,
+        config: Dict[str, str],
+        ttl: float = CREDS_RESOLVER_TTL,
+        clock: Optional[Callable[[], float]] = None,
+        resolve_func: Optional[Callable[[Dict[str, str]], Tuple[str, str, Optional[str]]]] = None,
+    ):
+        self._config = config
+        self._ttl = ttl
+        self._clock = clock or time.monotonic
+        self._resolve = resolve_func or credentials.resolve_creds
+        self._cached: Optional[Tuple[str, str, Optional[str]]] = None
+        self._cached_at: Optional[float] = None
+
+    def get(self) -> Tuple[str, str, Optional[str]]:
+        """返回凭据三元组：TTL 内复用缓存，过期/首次则重新解析并刷新缓存。"""
+        now = self._clock()
+        if (
+            self._cached is not None
+            and self._cached_at is not None
+            and (now - self._cached_at) < self._ttl
+        ):
+            return self._cached
+        creds = self._resolve(self._config)
+        self._cached = creds
+        self._cached_at = now
+        return creds
 
 
 class SetupError(Exception):
@@ -52,14 +117,12 @@ def _call(
     params: Optional[Dict[str, Any]] = None,
     style: str = "query",
     logger: Optional[Callable[[str], None]] = None,
+    creds: Optional[Tuple[str, str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
-    creds = (
-        config.get("ALIYUN_ACCESS_KEY_ID", ""),
-        config.get("ALIYUN_ACCESS_KEY_SECRET", ""),
-        (config.get("ALIYUN_SECURITY_TOKEN") or None)
-        if not env_mod.is_placeholder(config.get("ALIYUN_SECURITY_TOKEN", ""))
-        else None,
-    )
+    # 凭据解析优先级：显式 creds 参数（由 _CredsResolver.get() 逐层传入）> 实时解析。
+    # 旧实现曾在此读取模块级全局 _ACTIVE_CREDS，已移除（见 _CredsResolver docstring）：
+    # 模块级全局会短路 setup 长跑期间的到期刷新，且无隔离地污染同进程其他 _call。
+    resolved_creds = creds or credentials.resolve_creds(config)
     try:
         return rpc.rpc_call(
             config["CONTROL_ENDPOINT"],
@@ -67,14 +130,15 @@ def _call(
             CONTROL_API_VERSION,
             params,
             style=style,
-            creds=creds,
+            creds=resolved_creds,
             logger=logger,
         )
     except rpc.RpcError as exc:
         # from exc 保留异常链（__cause__）——_entity_not_exists / _already_exists 依赖它
         # 判定错误码；丢失链会把「资源不存在（应 [SKIP]）」误报成「请手动清理」。
         raise SetupError(
-            "{} 调用失败：{}。\n→ 常见排查：AK 无权限/失效（检查 ALIYUN_ACCESS_KEY_*）、"
+            "{} 调用失败：{}。\n→ 常见排查：凭据可能来自 .env 显式值 / SDK 凭据链 / "
+            "~/.aliyun/config.json，先用 `python3 sample.py --check` 确认命中哪一级、"
             "endpoint 不对（CONTROL_ENDPOINT 应为 agentidentity.<region>.aliyuncs.com）、"
             "参数名以 `aliyun agentidentity <cmd> --help` 输出为准后重试。".format(action, exc)
         ) from exc
@@ -117,6 +181,15 @@ def _entity_not_exists(exc: SetupError) -> bool:
 def _already_exists(exc: SetupError) -> bool:
     cause = exc.__cause__
     return isinstance(cause, rpc.RpcError) and cause.code.startswith("EntityAlreadyExists")
+
+
+def _resolver_creds(resolver: Optional["_CredsResolver"]) -> Optional[Tuple[str, str, Optional[str]]]:
+    """从可选解析器取凭据三元组；resolver 为 None 时返回 None（由 _call 实时解析兜底）。
+
+    每次 _call 前调用（而非在函数入口算一次），以确保 ``_bind_idp_and_wait`` 的
+    长轮询循环能在 TTL 过期时重新解析（拾取刷新后的 STS）。
+    """
+    return resolver.get() if resolver is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +250,17 @@ docs/control-plane-console.md，含每步的入口路径与 CLI 等价命令）�
 
 
 def run_setup_console() -> None:
-    """模式 A：打印控制台点选清单 + env 填空指引。"""
+    """模式 A：打印控制台点选清单 + env 填空指引。
+
+    G3：先做一次**纯离线**配置校验（``derive_defaults``），与 ``--check`` /
+    ``exchange-wat`` / ``setup --mode=script`` 的 fail-fast 行为保持一致。旧实现
+    只打印静态清单，``.env`` 写了非法 ``ENVIRONMENT``（如 ``staging``）时既不报错
+    也不告警、退出码 0，用户会拿着错误配置去控制台点一圈。``derive_defaults``
+    是纯字典运算（无网络 / 无写盘），校验失败抛 ``env.EnvError``（继承
+    ``RpcError``，由 ``sample.py`` 统一错误出口捕获→ ``[error]`` + 非 0 退出）；
+    校验通过后原有静态清单输出**逐字不变**。
+    """
+    env_mod.derive_defaults(env_mod.load_env())
     print(CONSOLE_CHECKLIST)
     print()
     print("提示：所有 <YOUR_...> 占位符在 {} 中替换；SCIM 为可选能力，主线无需配置。".format(env_mod.ENV_FILE))
@@ -189,9 +272,9 @@ def run_setup_console() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _find_pool(config: Dict[str, str], pool_name: str, logger) -> Optional[Dict[str, Any]]:
+def _find_pool(config: Dict[str, str], pool_name: str, logger, resolver: Optional["_CredsResolver"] = None) -> Optional[Dict[str, Any]]:
     """ListUserPools 按名查池（不带分页参数）。"""
-    resp = _call(config, "ListUserPools", {}, logger=logger)
+    resp = _call(config, "ListUserPools", {}, logger=logger, creds=_resolver_creds(resolver))
     pools = _first(resp, "UserPools", "UserPoolList", "Pools", default=[]) or []
     for pool in pools:
         if not isinstance(pool, dict):
@@ -201,10 +284,10 @@ def _find_pool(config: Dict[str, str], pool_name: str, logger) -> Optional[Dict[
     return None
 
 
-def _ensure_pool(config: Dict[str, str], logger) -> Tuple[str, str, bool]:
+def _ensure_pool(config: Dict[str, str], logger, resolver: Optional["_CredsResolver"] = None) -> Tuple[str, str, bool]:
     """步骤 1：创建或复用用户池。返回 (pool_id, pool_name, created)。"""
     pool_name = config["SETUP_POOL_NAME"]
-    existing = _find_pool(config, pool_name, logger)
+    existing = _find_pool(config, pool_name, logger, resolver)
     if existing:
         pool_id = _first(existing, "UserPoolId", "PoolId", default="")
         _log("[REUSE] 用户池 {}（UserPoolId={}）".format(pool_name, pool_id))
@@ -214,6 +297,7 @@ def _ensure_pool(config: Dict[str, str], logger) -> Tuple[str, str, bool]:
         "CreateUserPool",
         {"UserPoolName": pool_name, "Description": "idaas-cli-obo sample pool"},
         logger=logger,
+        creds=_resolver_creds(resolver),
     )
     # 预发实测响应为嵌套形态 {"RequestId": ..., "UserPool": {"UserPoolId": ...}}；
     # 顶层形态亦兼容（顶层候选键优先）。
@@ -228,7 +312,7 @@ def _ensure_pool(config: Dict[str, str], logger) -> Tuple[str, str, bool]:
     return pool_id, pool_name, True
 
 
-def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
+def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger, resolver: Optional["_CredsResolver"] = None) -> None:
     """步骤 2：绑定 IDaaS 身份源（SetSpecificIdentityProvider）并轮询至 SSOStatus=Enabled。
 
     兑底（新加坡正式环境实测）：SetSpecificIdentityProvider 仅接受
@@ -249,7 +333,7 @@ def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
         except ValueError:
             params["IdPMetadata"] = metadata_raw  # 非 JSON 则按字符串透传
     try:
-        resp = _call(config, "SetSpecificIdentityProvider", params, logger=logger)
+        resp = _call(config, "SetSpecificIdentityProvider", params, logger=logger, creds=_resolver_creds(resolver))
     except SetupError as exc:
         cause = exc.__cause__
         if isinstance(cause, rpc.RpcError) and cause.code.startswith("InvalidParameter"):
@@ -273,6 +357,7 @@ def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
                 "GetSpecificIdentityProvider",
                 {"UserPoolName": pool_name, "IdentityProviderType": idp_type},
                 logger=logger,
+                creds=_resolver_creds(resolver),
             )
         except SetupError as exc:
             if _entity_not_exists(exc):
@@ -293,7 +378,8 @@ def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger) -> None:
 
 
 def _ensure_client(
-    config: Dict[str, str], pool_name: str, redirect_uri: str, logger
+    config: Dict[str, str], pool_name: str, redirect_uri: str, logger,
+    resolver: Optional["_CredsResolver"] = None,
 ) -> Tuple[str, str, bool]:
     """步骤 3：创建或复用池 OAuth 客户端（loopback redirect_uri + 强制 PKCE）。
 
@@ -307,6 +393,7 @@ def _ensure_client(
             "GetUserPoolClient",
             {"UserPoolName": pool_name, "ClientName": client_name},
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
         client_id = _first(resp, "ClientId", nested=("UserPoolClient", "Client"), default=None)
         if client_id:
@@ -328,6 +415,7 @@ def _ensure_client(
                         "EnforcePKCE": True,
                     },
                     logger=logger,
+                    creds=_resolver_creds(resolver),
                 )
                 _log("        白名单已更新（共 {} 条，RequestId={}）。写后必读校验：".format(
                     len(merged), upd.get("RequestId", "-")
@@ -337,6 +425,7 @@ def _ensure_client(
                     "GetUserPoolClient",
                     {"UserPoolName": pool_name, "ClientName": client_name},
                     logger=logger,
+                    creds=_resolver_creds(resolver),
                 )
                 now_registered = (
                     _first(verify, "RedirectURIs", "RedirectUris", nested=("UserPoolClient", "Client"), default=[]) or []
@@ -364,6 +453,7 @@ def _ensure_client(
                 "SecretRequired": True,
             },
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
     except SetupError as exc:
         if not _already_exists(exc):
@@ -377,6 +467,7 @@ def _ensure_client(
             "GetUserPoolClient",
             {"UserPoolName": pool_name, "ClientName": client_name},
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
         reused_id = _first(resp, "ClientId", nested=("UserPoolClient", "Client"), default="")
         if not reused_id:
@@ -410,6 +501,7 @@ def _ensure_client(
             "CreateClientSecret",
             {"UserPoolName": pool_name, "ClientName": client_name},
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
         secret = _first(resp, "ClientSecret", "Secret", nested=("ClientSecret", "UserPoolClient"), default="")
         if isinstance(secret, dict):
@@ -425,8 +517,14 @@ def _pool_wellknown_host(config: Dict[str, str]) -> str:
 
     预发实测：池 discovery 走 DATA_ENDPOINT 公网路径；但部分正式环境（如新加坡
     ap-southeast-1）池 discovery/JWKS 改走登录域，数据面同路径 404。因此支持
-    可配置项 POOL_JWKS_BASE（填登录域，含/不含 https:// 前缀均可），留空则保持
-    原默认行为（DATA_ENDPOINT）——向后兼容。
+    可配置项 POOL_JWKS_BASE（填登录域，含/不含 https:// 前缀均可）。
+
+    留空时的行为取决于 ENVIRONMENT：
+    - 未显式声明 ENVIRONMENT（存量 .env 形态）或 ENVIRONMENT=pre-release →
+      保持原默认行为（DATA_ENDPOINT）——向后兼容；
+    - 显式声明 ENVIRONMENT=production → ``lib/env.py`` 的 ``derive_defaults``
+      会把 POOL_JWKS_BASE 镜像为 SIGNIN_BASE_URL，此时不再走 DATA_ENDPOINT
+      （stderr 会输出 ``[env] POOL_JWKS_BASE 由 SIGNIN_BASE_URL 派生…`` 告警）。
     """
     base = (config.get("POOL_JWKS_BASE") or "").strip()
     if env_mod.is_placeholder(base):
@@ -437,11 +535,11 @@ def _pool_wellknown_host(config: Dict[str, str]) -> str:
     return host
 
 
-def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger) -> Tuple[str, bool]:
+def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger, resolver: Optional["_CredsResolver"] = None) -> Tuple[str, bool]:
     """步骤 4：创建或复用 IdentityProvider（discovery 指向本池）。返回 (idp_name, created)。"""
     idp_name = config["SETUP_IDP_NAME"]
     try:
-        resp = _call(config, "GetIdentityProvider", {"IdentityProviderName": idp_name}, logger=logger)
+        resp = _call(config, "GetIdentityProvider", {"IdentityProviderName": idp_name}, logger=logger, creds=_resolver_creds(resolver))
         if _first(
             resp, "IdentityProviderName", "IdPName", nested=("IdentityProvider", "IdP"), default=None
         ):
@@ -462,6 +560,7 @@ def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger) -> T
             "Description": "idaas-cli-obo sample: trust this user pool",
         },
         logger=logger,
+        creds=_resolver_creds(resolver),
     )
     _log("[CREATE] IdentityProvider {}（DiscoveryURL=池 discovery，RequestId={}）".format(
         idp_name, resp.get("RequestId", "-")
@@ -469,14 +568,14 @@ def _ensure_identity_provider(config: Dict[str, str], pool_id: str, logger) -> T
     return idp_name, True
 
 
-def _ensure_workload_identity(config: Dict[str, str], idp_name: str, logger) -> Tuple[str, bool]:
+def _ensure_workload_identity(config: Dict[str, str], idp_name: str, logger, resolver: Optional["_CredsResolver"] = None) -> Tuple[str, bool]:
     """步骤 5：创建或复用 WorkloadIdentity（SessionBindingEnabled=true 是 OBO 前提）。
 
     返回 (wi_name, created)。
     """
     wi_name = config["WI_NAME"]
     try:
-        resp = _call(config, "GetWorkloadIdentity", {"WorkloadIdentityName": wi_name}, logger=logger)
+        resp = _call(config, "GetWorkloadIdentity", {"WorkloadIdentityName": wi_name}, logger=logger, creds=_resolver_creds(resolver))
         wi = resp.get("WorkloadIdentity") if isinstance(resp.get("WorkloadIdentity"), dict) else resp
         if _first(wi, "WorkloadIdentityName", nested=("WorkloadIdentity",), default=None):
             binding = wi.get("SessionBindingEnabled")
@@ -499,6 +598,7 @@ def _ensure_workload_identity(config: Dict[str, str], idp_name: str, logger) -> 
             "Description": "idaas-cli-obo sample workload identity",
         },
         logger=logger,
+        creds=_resolver_creds(resolver),
     )
     _log("[CREATE] WorkloadIdentity {}（SessionBindingEnabled=true，RequestId={}）".format(
         wi_name, resp.get("RequestId", "-")
@@ -506,7 +606,7 @@ def _ensure_workload_identity(config: Dict[str, str], idp_name: str, logger) -> 
     return wi_name, True
 
 
-def _ensure_oauth2_provider(config: Dict[str, str], logger) -> Tuple[str, bool]:
+def _ensure_oauth2_provider(config: Dict[str, str], logger, resolver: Optional["_CredsResolver"] = None) -> Tuple[str, bool]:
     """步骤 6：创建或复用 OAuth2 凭证提供商（配额=1，EntityAlreadyExists 视为复用）。
 
     返回 (provider_name, created)。
@@ -518,6 +618,7 @@ def _ensure_oauth2_provider(config: Dict[str, str], logger) -> Tuple[str, bool]:
             "GetOAuth2CredentialProvider",
             {"OAuth2CredentialProviderName": provider_name},
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
         if _first(
             resp,
@@ -559,6 +660,7 @@ def _ensure_oauth2_provider(config: Dict[str, str], logger) -> Tuple[str, bool]:
                 "Description": "idaas-cli-obo sample outbound provider",
             },
             logger=logger,
+            creds=_resolver_creds(resolver),
         )
     except SetupError as exc:
         if _already_exists(exc):
@@ -617,6 +719,27 @@ def run_setup_script(config: Optional[Dict[str, str]] = None, with_scim: bool = 
     """模式 B：一键幂等创建全部资源并回写 .env。返回产出 dict。"""
     config = env_mod.derive_defaults(config or env_mod.load_env())
     _require_setup(config)
+    # D11 fail-fast + D4 身份可见：在**任何创建操作之前**解析一次凭据。
+    # resolve_creds_detailed 在半填 / 三级全败 / STS 过期时抛 CredentialError，
+    # 早于第一次 _call（即早于任何资源创建），避免半填在资源部分创建后才暴露；
+    # 同时把本次生效的身份（来源 + 掩码 AK）回显，让「到底用哪个账号在创建」可见。
+    resolved = credentials.resolve_creds_detailed(config)
+    _log("[setup] 本次使用凭据：{}（AK={}，含 STS={}）".format(
+        resolved.source, _mask_ak(resolved.access_key_id),
+        "是" if resolved.security_token else "否",
+    ))
+    # D2：TTL 解析器替代模块级全局——setup 长跑期间过期自动重解析，
+    # 让 SDK/标准库的到期刷新语义重新生效；逐层显式传参给 _call(creds=...)。
+    resolver = _CredsResolver(config)
+    return _run_setup_script_inner(config, with_scim, resolver)
+
+
+def _run_setup_script_inner(
+    config: Dict[str, str],
+    with_scim: bool = False,
+    resolver: Optional["_CredsResolver"] = None,
+) -> Dict[str, str]:
+    """run_setup_script 内部实现（凭据由外层解析器 resolver 逐层显式传入）。"""
     if with_scim:
         _log("[setup] --with-scim：本 sample 未实现 SCIM provisioning 自动化（主线不依赖，")
         _log("       首次联邦登录会自动 JIT 建档）；SCIM 配置请参照 docs/control-plane-console.md 第 3 步。")
@@ -632,13 +755,13 @@ def run_setup_script(config: Optional[Dict[str, str]] = None, with_scim: bool = 
     # 若只在末尾统一落盘，中途失败时已建资源进不了清单；重跑后幂等复用（created=False）
     # 清单永远为空 → 资源沦为只能 --from-env 或手动清理的「受保护孤儿」。
     created_count = 0
-    pool_id, pool_name, pool_created = _ensure_pool(config, logger)
+    pool_id, pool_name, pool_created = _ensure_pool(config, logger, resolver)
     if pool_created:
         _merge_manifest([{"type": "user_pool", "name": pool_name}])
         created_count += 1
-    _bind_idp_and_wait(config, pool_name, logger)
+    _bind_idp_and_wait(config, pool_name, logger, resolver)
     client_id, client_secret, client_created = _ensure_client(
-        config, pool_name, config["OAUTH_REDIRECT_URI"], logger
+        config, pool_name, config["OAUTH_REDIRECT_URI"], logger, resolver
     )
     if client_created:
         _merge_manifest([{
@@ -647,20 +770,23 @@ def run_setup_script(config: Optional[Dict[str, str]] = None, with_scim: bool = 
             "pool_name": pool_name,
         }])
         created_count += 1
-    idp_name, idp_created = _ensure_identity_provider(config, pool_id, logger)
+    idp_name, idp_created = _ensure_identity_provider(config, pool_id, logger, resolver)
     if idp_created:
         _merge_manifest([{"type": "identity_provider", "name": idp_name}])
         created_count += 1
-    wi_name, wi_created = _ensure_workload_identity(config, idp_name, logger)
+    wi_name, wi_created = _ensure_workload_identity(config, idp_name, logger, resolver)
     if wi_created:
         _merge_manifest([{"type": "workload_identity", "name": wi_name}])
         created_count += 1
-    provider_name, provider_created = _ensure_oauth2_provider(config, logger)
+    provider_name, provider_created = _ensure_oauth2_provider(config, logger, resolver)
     if provider_created:
         _merge_manifest([{"type": "oauth2_provider", "name": provider_name}])
         created_count += 1
 
-    # 全部成功才回写 .env（失败场景在上面以 SetupError 中断，不写半份）
+    # D1：核心产出（含只在创建时返回一次的 client_secret）**先于** discovery 落盘。
+    # 旧顺序是 apply_discovery → writeback_env，任何从 discovery 逃出的异常都会让
+    # 「资源已创建、清单已增量落盘」与「.env 一个字段都没回写」之间出现窗口，而
+    # client_secret 丢失即不可逆。故拆成两段回写：本段只写核心产出，不含 issuer/jwks。
     updates: Dict[str, str] = {
         "USER_POOL_ID": pool_id,
         "OAUTH_CLIENT_ID": client_id,
@@ -672,32 +798,65 @@ def run_setup_script(config: Optional[Dict[str, str]] = None, with_scim: bool = 
     else:
         _log("[setup] 复用已有客户端：OAUTH_CLIENT_SECRET 保持 .env 现值（如无请在控制台重建密钥后填入）")
     path = writeback_env(updates)
-    _log("[setup] 产出已回写 {}（0600）：{}".format(path, ", ".join(sorted(updates.keys()))))
+    _log("[setup] 核心产出已回写 {}（0600）：{}".format(path, ", ".join(sorted(updates.keys()))))
+
+    # D1 第二段 + D7：discovery 拉 issuer/jwks，成功则**单独**第二次回写这两个键；
+    # 失败（DiscoveryError）降级为警告日志，绝不影响上面已落盘的核心产出。
+    # D7：仅当值相对 discovery 前的 config **发生变化**时才放进 disco_updates，
+    # 避免存量用户每次幂等重跑都重写这两行、抹掉行内注释、多一次原子替换窗口。
+    idaas_origin = config.get("IDAAS_ORIGIN", "")
+    if not env_mod.is_placeholder(idaas_origin):
+        pre_issuer = config.get("ORDER_SERVICE_ISSUER", "")
+        pre_jwks = config.get("ORDER_SERVICE_JWKS_URI", "")
+        try:
+            config = discovery.apply_discovery(config)
+            disco_updates: Dict[str, str] = {}
+            issuer_val = config.get("ORDER_SERVICE_ISSUER", "")
+            jwks_val = config.get("ORDER_SERVICE_JWKS_URI", "")
+            if not env_mod.is_placeholder(issuer_val) and issuer_val != pre_issuer:
+                disco_updates["ORDER_SERVICE_ISSUER"] = issuer_val
+            if not env_mod.is_placeholder(jwks_val) and jwks_val != pre_jwks:
+                disco_updates["ORDER_SERVICE_JWKS_URI"] = jwks_val
+            if disco_updates:
+                writeback_env(disco_updates)
+                updates.update(disco_updates)
+                _log("[setup] discovery 已自动回填并回写 {}（无需手动抄录）".format(
+                    ", ".join(sorted(disco_updates.keys()))
+                ))
+            else:
+                _log("[setup] discovery 未改动 issuer/jwks_uri（沿用 .env 显式值，不重写这两行）")
+        except discovery.DiscoveryError as exc:
+            _log("[setup] discovery 拉取失败（{}）——核心产出已落盘，不受影响；".format(exc))
+            _log("        ORDER_SERVICE_ISSUER/JWKS_URI 需手动填写（见 env.template 注释）")
     if created_count:
         _log("[setup] 资源清单已更新 {}（新增 {} 项；cleanup 仅删除清单内资源）".format(
             _manifest_path(), created_count
         ))
     else:
         _log("[setup] 本次未新建资源（全部复用），资源清单保持不变：{}".format(_manifest_path()))
-    _log("[setup] 还需手动确认 .env：SIGNIN_BASE_URL / ORDER_SERVICE_AUDIENCE / ")
-    _log("        ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI（见 env.template 注释的取值方法）。")
+    _log("[setup] 还需手动确认 .env：ORDER_SERVICE_AUDIENCE")
     _log("        ⚠️ ORDER_SERVICE_AUDIENCE 取「IDaaS 控制台该企业服务应用详情页的")
     _log("        audience 标识」（如 test-aud），不是 OBO provider 的 OutboundAudience")
-    _log("        （agent-… 形态，误传报 Forbidden.IdaasRsNotAuthorized）；正式环境另需")
-    _log("        确认 POOL_JWKS_BASE 与登录域取值（见 README「区域/环境差异」一节），")
-    _log("        然后运行：python3 sample.py --check → python3 sample.py login")
+    _log("        （agent-… 形态，误传报 Forbidden.IdaasRsNotAuthorized）")
+    _log("        确认后运行：python3 sample.py --check → python3 sample.py login")
     return updates
 
 
 def _require_setup(config: Dict[str, str], context: str = "setup --mode=script") -> None:
-    required = (
-        "ALIYUN_ACCESS_KEY_ID",
-        "ALIYUN_ACCESS_KEY_SECRET",
-        "CONTROL_ENDPOINT",
-        "DATA_ENDPOINT",
-        "OAUTH_REDIRECT_URI",
-    )
+    """管控面操作前置校验。
+
+    凭据由 credentials.resolve_creds 三级降级链负责（不在此硬校验 AK/SK）。
+    endpoint 校验放宽为「REGION 或 CONTROL_ENDPOINT/DATA_ENDPOINT 至少其一非占位」
+    ——derive_defaults 已在入口调用，派生后 endpoint 会有值。
+    """
+    required = ("OAUTH_REDIRECT_URI",)
     missing = [k for k in required if env_mod.is_placeholder(config.get(k, ""))]
+    # endpoint 放宽：REGION 或显式 endpoint 至少其一有值即可（derive_defaults 会从 REGION 派生 endpoint）
+    has_region = not env_mod.is_placeholder(config.get("REGION", ""))
+    has_control = not env_mod.is_placeholder(config.get("CONTROL_ENDPOINT", ""))
+    has_data = not env_mod.is_placeholder(config.get("DATA_ENDPOINT", ""))
+    if not (has_region or (has_control and has_data)):
+        missing.append("REGION（或 CONTROL_ENDPOINT + DATA_ENDPOINT）")
     if missing:
         raise SetupError(
             "{} 缺少配置：{}。→ 请在 {} 补齐后重跑"
@@ -833,15 +992,26 @@ def _manifest_entries_from_env(config: Dict[str, str]) -> List[Dict[str, Any]]:
 
 
 def _delete_quiet(
-    config: Dict[str, str], action: str, params: Dict[str, Any], what: str, logger
+    config: Dict[str, str], action: str, params: Dict[str, Any], what: str, logger,
+    creds: Optional[Tuple[str, str, Optional[str]]] = None,
+    resolver: Optional["_CredsResolver"] = None,
 ) -> str:
     """删除资源。返回 "deleted" / "skipped"（EntityNotExists）/ "failed"。
 
     EntityNotExists → [SKIP]（依赖 _call 的 from exc 异常链判定错误码）；
     其余失败打印警告但不阻断（逆序清理尽力而为）。
+    CredentialError（凭据过期/不可得）同样记为 "failed" 而非上抛，
+    保障剩余条目继续尝试（尽力而为契约）。
+
+    W1：凭据解析（``resolver`` 路径）必须在 try **之内**——旧实现把
+    ``creds=_resolver_creds(resolver)`` 放在调用方实参列表求值，凭据异常在
+    本函数的 try 之外抛出，except CredentialError 在生产路径是死代码，
+    且循环在第一条即中断、清单回写整段被跳过。现改为收 ``resolver``
+    （保留 ``creds`` 直接传三元组的兼容形态），try 内延迟解析。
     """
     try:
-        resp = _call(config, action, params, logger=logger)
+        resolved_creds = creds if creds is not None else _resolver_creds(resolver)
+        resp = _call(config, action, params, logger=logger, creds=resolved_creds)
         _log("[DELETE] {}（RequestId={}）".format(what, resp.get("RequestId", "-")))
         return "deleted"
     except SetupError as exc:
@@ -849,6 +1019,11 @@ def _delete_quiet(
             _log("[SKIP] {}（不存在）".format(what))
             return "skipped"
         _log("[WARN] 删除 {} 失败（{}）——请手动检查后清理".format(what, exc.__cause__ or exc))
+        return "failed"
+    except credentials.CredentialError as exc:
+        # 凭据过期/不可得（含 resolver 解析失败）：记为 failed 而非上抛，
+        # 条目留在清单里供下次续删（尽力而为契约）。
+        _log("[WARN] 删除 {} 失败（凭据问题：{}）——请检查凭据后重跑 cleanup 续删".format(what, exc))
         return "failed"
 
 
@@ -860,14 +1035,39 @@ def _entry_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
 def _run_deletes(
     config: Dict[str, str],
     entries: List[Dict[str, Any]],
+    resolver: Optional["_CredsResolver"] = None,
 ) -> List[Dict[str, Any]]:
     """逆序执行删除（依赖顺序：池最后删）。
 
     成功/[SKIP] 的条目视为已处理；failed 与未知类型条目保留。
     返回未处理完的条目（按原传入顺序）——清单持久化由调用方决定。
+    凭据由 resolver 逐层显式传入（与 setup 共用同一 _CredsResolver 机制，
+    消除两条路径凭据新鲜度语义的不对称）。
+
+    W1：resolver 不再在实参列表提前解引用（那会让凭据异常逃逸到
+    _delete_quiet 的 try 之外、循环第一条即中断）；改传 resolver 本体，
+    由 _delete_quiet 在 try 内延迟解析。另增「凭据不可恢复即提前收敛」
+    保护：事前探测失败或失败后复探仍失败时，不再对剩余 N 个条目各发
+    一次注定失败的请求；**所有未尝试/失败条目均进 remaining**，保证调用方
+    （run_cleanup）的清单回写始终覆盖全部未处理条目。
     """
     logger = lambda msg: _log("        {}".format(msg))  # noqa: E731
     remaining: List[Dict[str, Any]] = []
+
+    def _abort_cred_failure(exc: credentials.CredentialError) -> None:
+        _log("[WARN] 凭据不可用（{}）——提前收敛：剩余条目不再逐个发请求，"
+             "全部保留在清单，修复凭据后重跑 cleanup 续删。".format(exc))
+
+    # 事前探测：凭据本就不可解时直接全量保留（不发任何请求）。
+    if resolver is not None:
+        try:
+            _resolver_creds(resolver)
+        except credentials.CredentialError as exc:
+            _abort_cred_failure(exc)
+            for entry in entries:
+                if isinstance(entry, dict):
+                    remaining.append(entry)
+            return remaining
     for entry in reversed(entries):
         if not isinstance(entry, dict):
             continue
@@ -879,9 +1079,27 @@ def _run_deletes(
             continue
         label, action = spec
         what = "{} {}".format(label, entry["name"])
-        status = _delete_quiet(config, action, _delete_params(entry), what, logger)
+        status = _delete_quiet(
+            config, action, _delete_params(entry), what, logger,
+            resolver=resolver,
+        )
         if status == "failed":
             remaining.append(entry)  # 删除失败：保留在清单，修复后重跑续删
+            # 失败后复探：凭据已不可恢复（如长跑中途 STS 过期）则提前收敛，
+            # 剩余未尝试条目全部进 remaining（不逐个发注定失败的请求）。
+            if resolver is not None:
+                try:
+                    _resolver_creds(resolver)
+                except credentials.CredentialError as exc:
+                    _abort_cred_failure(exc)
+                    pending = [e for e in reversed(entries) if isinstance(e, dict)]
+                    idx = next(
+                        (i for i, e in enumerate(pending) if _entry_key(e) == _entry_key(entry)),
+                        None,
+                    )
+                    if idx is not None:
+                        remaining.extend(pending[idx + 1:])
+                    break
     remaining.reverse()  # 恢复原顺序
     return remaining
 
@@ -922,6 +1140,17 @@ def run_cleanup(
         if not deletable:
             _log("[cleanup] 清单内除保留池外无可删除条目，未做任何删除。")
             return
+        # D4：在确认提示**之前**派生 config、解析凭据，把生效身份（掩码 AK + 来源）回显。
+        # 改造后 .env 可留空即放行，真正生效的身份在第一次删除时才由凭据链决定（可能是
+        # 本机 CLI 的任意 profile）；防误删清单只约束「资源名」维度，不约束「账号/身份」维度，
+        # 故必须在确认前让身份可见。D2：resolver 供 _run_deletes 逐层显式传参（与 setup 对称）。
+        config = env_mod.derive_defaults(config or env_mod.load_env())
+        _require_setup(config, context="cleanup（需可解析的云账号凭据）")
+        resolved = credentials.resolve_creds_detailed(config)
+        _log("  将使用凭据 AK={}（含 STS={}，来源：{}）删除以上 {} 项。".format(
+            _mask_ak(resolved.access_key_id),
+            "是" if resolved.security_token else "否",
+            resolved.source, len(deletable)))
         if not assume_yes:
             try:
                 answer = input("确认删除？输入 yes 继续：").strip().lower()
@@ -931,9 +1160,8 @@ def run_cleanup(
             if answer != "yes":
                 _log("[cleanup] 已取消（未做任何删除）。加 --yes 可跳过确认。")
                 return
-        config = env_mod.derive_defaults(config or env_mod.load_env())
-        _require_setup(config, context="cleanup（需删除用的 AK 凭证）")
-        remaining = _run_deletes(config, deletable)
+        resolver = _CredsResolver(config)
+        remaining = _run_deletes(config, deletable, resolver)
         # 回写清单：保留（--keep-pool）+ 未处理完的条目，按原清单顺序
         if remaining or kept:
             keep_keys = {_entry_key(e) for e in list(remaining) + list(kept)}
@@ -976,5 +1204,14 @@ def run_cleanup(
     if not assume_yes:
         _log("[cleanup] --from-env 需叠加 --yes 显式双确认：python3 sample.py cleanup --from-env --yes")
         return
-    _run_deletes(config, entries)  # from-env 为内存清单：不落盘
+    # D4：--from-env 逃生通道本就「不校验资源归属」，叠加身份漂移风险更大：
+    # 回显生效身份（掩码 AK + 来源）+ 一行显著警告，说明身份来自本机凭据链。
+    resolved = credentials.resolve_creds_detailed(config)
+    _log("[cleanup] ⚠️ --from-env：将使用凭据 AK={}（含 STS={}，来源：{}）删除；".format(
+        _mask_ak(resolved.access_key_id),
+        "是" if resolved.security_token else "否",
+        resolved.source))
+    _log("        该路径不校验资源归属，且身份来自本机凭据链（可能是任意 profile）——请确认账号无误。")
+    resolver = _CredsResolver(config)
+    _run_deletes(config, entries, resolver)  # from-env 为内存清单：不落盘
     _log("[cleanup] 完成。本地令牌产物 .tokens/ 未删除（含敏感值）；如需清理：rm -rf .tokens")
