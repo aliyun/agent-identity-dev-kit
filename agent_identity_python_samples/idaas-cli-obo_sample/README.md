@@ -1,16 +1,17 @@
 # Agent Identity × IDaaS: Inbound Federated Login + OBO Outbound (CLI Sample)
 
-A zero-dependency CLI sample that demonstrates the full chain of **Agent
-Identity × IDaaS**: an employee federates into an Agent Identity user pool via
-IDaaS, the identity is lifted from "human" to "workload" (Workload Access
-Token), exchanged on-behalf-of for a downstream OAuth2 token, and a mock order
-service returns **identity-differentiated data**. Pure Python 3.9+ standard
-library — no third-party runtime dependencies.
+A CLI sample that demonstrates the full chain of **Agent Identity × IDaaS**: an
+employee federates into an Agent Identity user pool via IDaaS, the identity is
+lifted from "human" to "workload" (Workload Access Token), exchanged
+on-behalf-of for a downstream OAuth2 token, and a mock order service returns
+**identity-differentiated data**. It runs standalone on the pure Python 3.9+
+standard library; the optional `alibabacloud-credentials` package (Python 3.10+)
+enables the aliyun CLI credential chain with automatic background refresh.
 
 > 📖 Deep dives: [docs/architecture.md](./docs/architecture.md) (token
 > sequence, API mapping, RPC signing) ·
 > [docs/control-plane-console.md](./docs/control-plane-console.md) (console
-> walkthrough; screenshots pending — see the note at the top of that document) ·
+> walkthrough with masked console screenshots) ·
 > [docs/troubleshooting.md](./docs/troubleshooting.md) (every known pitfall).
 
 ## 🚀 Overview
@@ -71,12 +72,12 @@ One command chains them all: `python3 sample.py demo`.
 
 | Requirement | Description |
 |------|------|
-| Python 3.9+ | The CLI and the mock order service are pure standard library — **zero third-party runtime dependencies** |
+| Python 3.9+ | The CLI and the mock order service run standalone on the pure standard library; the optional credential-chain SDK needs Python 3.10+ |
 | Platform | Verified on macOS and Linux; Windows should work in theory (pure standard library) but is untested |
 | Alibaba Cloud account | Agent Identity service activated in your region |
-| AccessKey pair | Needed for `setup --mode=script` and the data-plane RPC calls (`exchange-wat`, `obo`); recommend a least-privilege RAM user |
+| aliyun CLI | **Recommended**: `aliyun configure` once → the sample picks up credentials through the credential chain, so **no AK/SK goes into `.env`**. Also usable for diagnostics / equivalent API calls. Not strictly required — the sample implements Alibaba Cloud RPC V1 signing itself |
+| `alibabacloud-credentials` *(recommended, optional)* | `pip install -r requirements.txt` enables the credential chain with **automatic OAuth background refresh**; skip it and the sample falls back to a pure-standard-library read of `~/.aliyun/config.json`. See the **Credential chain** section below |
 | An IDaaS (EIAM) instance | With at least one employee account that can log in |
-| aliyun CLI *(optional)* | For diagnostics / equivalent API calls only — **not required** to run this sample: it implements Alibaba Cloud RPC V1 signing itself |
 
 ## 📦 Installation
 
@@ -87,42 +88,156 @@ git clone https://github.com/aliyun/agent-identity-dev-kit
 cd agent_identity_python_samples/idaas-cli-obo_sample
 ```
 
-### 2. Create your local `.env`
+### 2. *(Recommended)* Configure credentials + install the optional SDK
+
+```bash
+aliyun configure                   # one-time login (OAuth / AK) → writes ~/.aliyun/config.json
+pip install -r requirements.txt     # optional: enables credential-chain auto-refresh
+```
+
+`aliyun configure` is all you need for credentials — the sample reads them
+through the **credential chain**, so **no AK/SK goes into `.env`**. Installing
+`requirements.txt` (the optional `alibabacloud-credentials` SDK) turns on
+automatic OAuth background refresh; skip it and the sample falls back to a
+pure-standard-library read of `~/.aliyun/config.json`. Details in
+**🔑 Credential chain** below.
+
+### 3. Create your local `.env`
 
 ```bash
 cp env.template .env
 chmod 600 .env
 ```
 
-### 3. Fill in `.env`
+### 4. Fill in `.env` — only **3 required** values
 
-Every placeholder (`<YOUR_...>`) must be replaced. Where each value comes
-from (also documented inline in `env.template`, and validated by
-`python3 sample.py --check`):
+You only fill in **three** values by hand:
 
 | Variable | Source | Description |
 |------|------|------|
-| `REGION` | Console top bar | Region ID, e.g. `cn-hangzhou` |
-| `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` | RAM console → AccessKey management | AK pair; used by `setup --mode=script`, `exchange-wat`, `obo` |
-| `ALIYUN_SECURITY_TOKEN` | *(optional)* STS | Only when using temporary credentials |
-| `CONTROL_ENDPOINT` | — (generic form) | Control plane, `agentidentity.<region>.aliyuncs.com` |
-| `DATA_ENDPOINT` | — (generic form) | Data plane, `agentidentitydata.<region>.aliyuncs.com` |
-| `SIGNIN_BASE_URL` | User pool detail page | Pool OAuth root, e.g. `https://signin.<region>.aliyuncs.com` (pre-release) or the production sign-in domain |
-| `POOL_JWKS_BASE` | *(optional)* | Pool discovery/JWKS host root. Default (empty) = `DATA_ENDPOINT` (pre-release behavior); set to the sign-in domain when the environment serves pool discovery/JWKS there (e.g. Singapore `ap-southeast-1` production, where the data-plane path returns 404). May equal `SIGNIN_BASE_URL`. |
-| `USER_POOL_ID` | setup output / console | User pool ID (`up_...`) |
-| `OAUTH_CLIENT_ID` | setup output / console | Pool OAuth client ID (`client_...`) |
-| `OAUTH_CLIENT_SECRET` | setup output / console | Pool OAuth client secret (or use `OAUTH_CLIENT_SECRET_FILE`, a 0600 file) |
-| `OAUTH_REDIRECT_URI` | — | `http://127.0.0.1:8765/callback` (default) |
-| `WI_NAME` | setup output / console | Workload identity name — must have session binding enabled |
-| `OBO_PROVIDER_NAME` | setup output / console | Outbound OAuth2 credential provider name |
-| `ORDER_SERVICE_AUDIENCE` | IDaaS console → the enterprise-app detail page | **The audience identifier of the enterprise service app itself** (e.g. `test-aud`); **not** the OBO provider's OutboundAudience (`agent-…` form) — passing the latter fails with `Forbidden.IdaasRsNotAuthorized` (verified in production) |
-| `ORDER_SERVICE_SCOPES` | — (optional) | Comma-separated; default `read,write.all`; must be a **subset of the scopes the target app is authorized for** — exceeding it fails with `Forbidden.ScopeNotGranted` (verified in production; when in doubt, minimize scopes one by one) |
-| `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | IDaaS discovery document | `issuer` / `jwks_uri` from `GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` (publicly reachable) |
-| `SETUP_*` | — (mode B only) | Resource names and provider config for `setup --mode=script`; see the comments in `env.template` |
+| `REGION` | Console top bar | Region ID, e.g. `ap-southeast-1` |
+| `ORDER_SERVICE_AUDIENCE` | IDaaS console → the enterprise-app detail page | The enterprise service app's **own audience identifier** (e.g. `test-aud`) — **not** the OBO provider's OutboundAudience (`agent-…` form) |
+| `IDAAS_ORIGIN` | Your IDaaS instance domain root | e.g. `https://xxx.cloud-idaas.com`; used to auto-fetch the OIDC discovery document for `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` |
+
+Everything else is **automatic**:
+
+- `REGION` + `ENVIRONMENT` derive the endpoints (`CONTROL_ENDPOINT`,
+  `DATA_ENDPOINT`, `SIGNIN_BASE_URL`). `POOL_JWKS_BASE` is mirrored from
+  `SIGNIN_BASE_URL` **only when you explicitly declare `ENVIRONMENT=production`**
+  in `.env`; if that line is absent or set to `pre-release`, `POOL_JWKS_BASE`
+  stays empty and pool discovery/JWKS falls back to `DATA_ENDPOINT` (the
+  legacy behavior).
+- `IDAAS_ORIGIN` → the sample pulls the OIDC discovery document at runtime and
+  fills `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` (lazily — only in
+  `demo` / `serve-orders` / at the end of `setup`; `login`, `--check`,
+  `exchange-wat`, `obo` never trigger it).
+  The discovery response is subject to a same-origin check (anti-SSRF / issuer
+  confusion): the normalized `(host, port)` of `issuer`/`jwks_uri` must match
+  `IDAAS_ORIGIN`. Semantically equivalent forms (explicit `:443`, trailing-dot
+  FQDN, punycode, IPv6) are accepted; cross-host, http, and embedded
+  `user:password@` are rejected.
+- `USER_POOL_ID`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `WI_NAME`,
+  `OBO_PROVIDER_NAME` are written back to `.env` by `setup --mode=script`
+  (along with the discovery-derived issuer/JWKS).
+- Credentials come from the credential chain — leave `ALIYUN_ACCESS_KEY_*`
+  empty.
+- `OAUTH_REDIRECT_URI`, `ORDER_SERVICE_SCOPES`, `SETUP_*` keep sensible
+  defaults.
+
+Full variable reference (all optional unless marked **Required**; also
+documented inline in `env.template`, and validated by `python3 sample.py
+--check`):
+
+| Variable | Required | Description |
+|------|------|------|
+| `REGION` | **Yes** | Region ID, e.g. `ap-southeast-1` (console top bar) |
+| `ORDER_SERVICE_AUDIENCE` | **Yes** | The enterprise service app's **own audience identifier** (e.g. `test-aud`); **not** the OBO provider's OutboundAudience (`agent-…` form) — passing the latter fails with `Forbidden.IdaasRsNotAuthorized` (verified in production) |
+| `IDAAS_ORIGIN` | **Yes** | IDaaS instance domain root (e.g. `https://xxx.cloud-idaas.com`); auto-fetches the discovery document for `ORDER_SERVICE_ISSUER`/`JWKS_URI`. May be left empty if you set `ORDER_SERVICE_ISSUER` explicitly (it is reverse-derived) |
+| `ENVIRONMENT` | No | `production` / `pre-release` (case-insensitive, auto-trimmed; any other value raises `EnvError`). Controls the `SIGNIN_BASE_URL` derivation form. **`POOL_JWKS_BASE` is only mirrored when this key is _explicitly declared_ as `production`**; absent/empty = legacy behavior (POOL_JWKS_BASE stays empty). Explicit values for `SIGNIN_BASE_URL`/`POOL_JWKS_BASE` always override |
+| `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` | No | **Optional**: leave both empty to use the aliyun CLI credential chain (recommended); explicit values take top priority (backward-compat / CI). **Both must be filled or both empty** — filling only one raises `CredentialError` immediately (no silent fallback). See **🔑 Credential chain** |
+| `ALIYUN_SECURITY_TOKEN` | No | STS token for the explicit branch only (leave empty with a long-lived AK) |
+| `CONTROL_ENDPOINT` / `DATA_ENDPOINT` | No | Leave empty → auto-derived from `REGION` (`agentidentity.<region>.aliyuncs.com` / `agentidentitydata.<region>.aliyuncs.com`) |
+| `SIGNIN_BASE_URL` | No | Leave empty → auto-derived from `REGION` + `ENVIRONMENT` (production: `https://signin-<region>.aliyunagentid.com`; pre-release: `https://signin.<region>.aliyuncs.com`) |
+| `POOL_JWKS_BASE` | No | Leave empty → **if `ENVIRONMENT=production` is explicitly declared**, auto-mirrored from `SIGNIN_BASE_URL`; otherwise (absent/pre-release) stays empty and pool discovery/JWKS uses `DATA_ENDPOINT` (backward-compat). Set explicitly to override in either case |
+| `USER_POOL_ID` / `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | Auto | Written back by `setup --mode=script`, or copy from the console (`OAUTH_CLIENT_SECRET_FILE`, a 0600 file, also works) |
+| `OAUTH_REDIRECT_URI` | Auto (has default) | Default `http://127.0.0.1:8765/callback` |
+| `WI_NAME` / `OBO_PROVIDER_NAME` | Auto | Written back by `setup --mode=script`, or copy from the console (WI must have session binding enabled) |
+| `ORDER_SERVICE_SCOPES` | No | Comma-separated; default `read,write.all`; must be a **subset of the scopes the target app is authorized for** — exceeding it fails with `Forbidden.ScopeNotGranted` (verified in production) |
+| `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | No | Leave empty → auto-filled at runtime from the `IDAAS_ORIGIN` discovery document, **no manual copying**. If your IDaaS instance uses a custom issuer path, discovery returns the authoritative value |
+| `SETUP_*` | No | Resource names & provider config for `setup --mode=script`; keep defaults — except `SETUP_OBO_PROVIDER_CONFIG`, which must point at the IDaaS order-service application |
 
 > The mock order service verifies tokens with its own pure-standard-library
 > RS256 implementation (educational). Production code should use
 > PyJWT + cryptography.
+
+## 🔑 Credential chain (three ways to authenticate)
+
+The sample resolves Alibaba Cloud RPC credentials through a **three-level
+fallback chain** (`lib/credentials.py` → `resolve_creds`); the first level that
+yields credentials wins:
+
+| # | Level | Precondition | Behavior |
+|---|---|---|---|
+| 1 | **Explicit AK/SK** in `.env` | `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` set (non-placeholder) | Used directly; `ALIYUN_SECURITY_TOKEN` is appended when set. **Top priority** — backward-compat / CI / fixed teaching credentials |
+| 2 | **SDK default chain** (`alibabacloud_credentials`) | `pip install -r requirements.txt` done | `CredentialClient()` default chain: reads `~/.aliyun/config.json`, and for an OAuth profile refreshes the token **non-interactively in the background** via the refresh_token. **Recommended** |
+| 3 | **Standard-library fallback** | Neither of the above | Pure-stdlib parse of `~/.aliyun/config.json` (the `current` profile): `AK` / `StsToken` / `OAuth` modes. No third-party package needed |
+
+**OAuth fallback boundary**: level 3 (standard library) does **not** refresh
+tokens. If the cached OAuth/StsToken STS credential is expired, it raises a
+`CredentialError` with guidance rather than silently using an expired token.
+Two ways out: `pip install -r requirements.txt` so the SDK auto-refreshes
+(level 2), or re-run `aliyun configure` to log in again.
+
+**Environment-variable naming** (differs by layer — don't mix them up):
+
+- The explicit layer (level 1) reads the sample's `ALIYUN_ACCESS_KEY_ID` /
+  `ALIYUN_ACCESS_KEY_SECRET` / `ALIYUN_SECURITY_TOKEN`.
+- The SDK chain (level 2) internally reads `ALIBABA_CLOUD_ACCESS_KEY_ID` /
+  `ALIBABA_CLOUD_ACCESS_KEY_SECRET` / `ALIBABA_CLOUD_SECURITY_TOKEN` (the
+  `ALIBABA_CLOUD_*` prefix), handled by the SDK itself.
+
+**Recommended setup**: `aliyun configure` once (OAuth login) **+** `pip install
+-r requirements.txt` — the sample then authenticates with automatic background
+refresh and **no secrets in `.env`**.
+
+**Half-fill is a hard error**: `ALIYUN_ACCESS_KEY_ID` and
+`ALIYUN_ACCESS_KEY_SECRET` must **both be filled or both be empty**. Filling
+only one raises `CredentialError` immediately with two ways out (fill the other,
+or clear both to fall through to the credential chain). This prevents a silent
+fallback that could execute destructive control-plane operations under a
+different Alibaba Cloud account.
+
+**`--check` credential report** (offline by default): `python3 sample.py
+--check` runs a **pure offline health-check** (sub-second, ~0.3–0.4 s including
+interpreter startup; no network, no OAuth refresh, no writes to
+`~/.aliyun/config.json`). It reports each level's
+*capability* in parallel — level 1 reads `.env` explicit config; level 2 only
+reports whether the SDK is installed (never calls `get_credential()`); level 3
+parses `~/.aliyun/config.json` read-only with STS expiry check. It does **not**
+determine the final winning level. Add `--creds-live` for a real resolution:
+`python3 sample.py --check --creds-live` executes the full chain, reports the
+**exact level + human-readable source** (SDK level shows `provider_name`;
+stdlib level shows `~/.aliyun/config.json(profile=X, mode=Y)`), and may trigger
+network / OAuth renewal / write-back to `~/.aliyun/config.json`.
+
+**Exit code**: `--check` returns `0` only when all required keys are
+present **and** the credential probe finds no deterministic
+misconfiguration; otherwise it returns `1` (so CI gates can block on the exit
+code). Deterministic misconfigurations are exactly: half-filled explicit AK/SK
+(consistently counted in **both** offline and `--creds-live` modes), or an
+expired STS credential in the stdlib `~/.aliyun/config.json` profile **and that
+level is reachable** (when Level 1 hits, Level 3's stale expiry is not counted
+— the three-level chain uses short-circuit semantics, so an unreachable level
+does not affect the winning credential).
+Leaving both explicit keys empty (the recommended credential-chain posture) and
+"SDK installed but not called" both return `0`. See
+[docs/troubleshooting.md](./docs/troubleshooting.md) for a full sample output and
+the exit-code rules.
+
+The `--check` report also marks keys whose values were **derived by the
+program** (not explicitly set by you) with a `（已派生）` suffix. When
+troubleshooting 404 / NXDOMAIN / domain mismatch errors, suspect derived
+values first.
 
 ## 🔧 Resource Setup (control plane — two ways)
 
@@ -133,8 +248,8 @@ client → outbound provider → workload identity. Pick **one** of two modes:
 
 Run `python3 sample.py setup --mode=console` to print the numbered checklist,
 then follow **[docs/control-plane-console.md](./docs/control-plane-console.md)**
-— a screenshot-annotated, 6-step walkthrough (screenshots pending — see the
-note at the top of that document):
+— a screenshot-annotated, 6-step walkthrough (masked console screenshots
+bundled under `docs/images/`):
 
 1. Create a user pool → record `USER_POOL_ID` (also grab `SIGNIN_BASE_URL`
    from the pool detail page).
@@ -151,8 +266,9 @@ note at the top of that document):
    provider's OutboundAudience (`agent-…` form; passing it fails with
    `Forbidden.IdaasRsNotAuthorized`).
 6. Create the IdentityProvider (discovery = this pool) and the
-   WorkloadIdentity **with session binding enabled** → record `WI_NAME` and
-   the order-service issuer/JWKS from the IDaaS discovery document.
+   WorkloadIdentity **with session binding enabled** → record `WI_NAME`. The
+   order-service issuer/JWKS are fetched automatically from the `IDAAS_ORIGIN`
+   discovery document — no manual copying needed.
 
 ### Option 2 — One-shot script (recommended if you just want it running)
 
@@ -167,6 +283,10 @@ only on full success writes the outputs back to `.env` (0600, atomic). A
 failed run never writes a half-filled `.env` — fix the reported issue and
 re-run; completed steps are skipped.
 
+**Identity echo**: before the first write operation, `setup` prints the
+credential source and masked AK (`[setup] 本次使用凭据：…（AK=LTAI…(len=24)，含 STS=否）`)
+so you can confirm which account is being used to create resources.
+
 **Known limitation (honest note from pre-release + Singapore production
 testing)**: the CLI help for `SetSpecificIdentityProvider` currently lists
 **DingTalk only** as the supported identity-source type (production testing
@@ -179,16 +299,20 @@ step 2) and re-run the script — it picks up where it left off. Also note
 application) must be filled in `.env` beforehand, and the credential-provider
 quota is 1 per account (an existing one is reused).
 
-**What the script writes back — and what it does not**: the script only
-writes back the resources it creates (`USER_POOL_ID`, `OAUTH_CLIENT_ID`,
-`OAUTH_CLIENT_SECRET`, `WI_NAME`, `OBO_PROVIDER_NAME`). You still need to
-fill in `SIGNIN_BASE_URL`, `POOL_JWKS_BASE` (when the environment needs it),
-`ORDER_SERVICE_AUDIENCE`, `ORDER_SERVICE_ISSUER` and `ORDER_SERVICE_JWKS_URI`
-yourself, following the table above (the `ORDER_SERVICE_*` values require
-creating the order-service application on the IDaaS side first — see Option 1,
-steps 5/6; mind the audience pitfall — not the provider's OutboundAudience).
-Run `python3 sample.py --check` before the demo to confirm everything is in
-place.
+**What the script writes back**: the resources it creates (`USER_POOL_ID`,
+`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `WI_NAME`, `OBO_PROVIDER_NAME`) —
+plus, when `IDAAS_ORIGIN` is set, the `ORDER_SERVICE_ISSUER` /
+`ORDER_SERVICE_JWKS_URI` pulled from the discovery document at the end of the
+run (two-phase writeback: core outputs are saved **first**, then discovery
+fills issuer/JWKS in a second pass; a discovery failure never loses the
+already-saved `client_secret`). The endpoints (`CONTROL_ENDPOINT`,
+`DATA_ENDPOINT`, `SIGNIN_BASE_URL`) are auto-derived from `REGION` +
+`ENVIRONMENT`; `POOL_JWKS_BASE` is mirrored only when `ENVIRONMENT=production`
+is explicitly declared. The only manual values are the **3 required** ones
+(`REGION`, `ORDER_SERVICE_AUDIENCE`, `IDAAS_ORIGIN`) — create the order-service
+application on the IDaaS side first (see Option 1, steps 5/6; mind the audience
+pitfall — not the provider's OutboundAudience). Run `python3 sample.py --check`
+before the demo to confirm everything is in place.
 
 ### SCIM (out of scope for v1)
 
@@ -319,8 +443,17 @@ python3 sample.py serve-orders          # --port 9090 by default; Ctrl+C to stop
 ```
 
 Routes: `GET /health` (no auth) · `GET /orders` (Bearer verified; `read.all`
-scope → all orders, otherwise only the caller's own) · `POST /orders`
+scope → all orders, otherwise only the caller’s own) · `POST /orders`
 (`write.all` required, else 403).
+
+> **Fail-closed startup**: `serve-orders` refuses to start if
+> `ORDER_SERVICE_ISSUER`, `ORDER_SERVICE_JWKS_URI`, or
+> `ORDER_SERVICE_AUDIENCE` is empty/placeholder — an empty issuer would
+> silently skip `iss` verification (accepting any token signed by that JWKS
+> with a matching `aud`). Two ways out: **(A)** fill `IDAAS_ORIGIN` and let
+> discovery auto-populate issuer/JWKS, or **(B)** fill all three explicitly.
+> A `DiscoveryError` during startup is downgraded to a stderr warning (the
+> server still starts; JWKS-unreachable requests degrade to 503 per-request).
 
 ### One-shot — `demo`
 
@@ -362,8 +495,8 @@ described in this document:
 
 | Topic | Pre-release | Production (e.g. Singapore `ap-southeast-1`) |
 |---|---|---|
-| Sign-in domain `SIGNIN_BASE_URL` | `https://signin.<region>.aliyuncs.com` form | `https://signin-<region>.aliyunagentid.com` (hyphen + `aliyunagentid.com`; pre-release is `pre-signin-<region>.alibabacloudagentid.com`); always take the address shown on the user-pool detail page |
-| Pool discovery / JWKS | Served on `DATA_ENDPOINT` (leave `POOL_JWKS_BASE` empty — the default) | Served on the **sign-in domain** (the data-plane path returns 404) — `POOL_JWKS_BASE` must be set to the sign-in domain (may equal `SIGNIN_BASE_URL`) |
+| Sign-in domain `SIGNIN_BASE_URL` | Auto-derived when `ENVIRONMENT=pre-release`: `https://signin.<region>.aliyuncs.com` | Auto-derived when `ENVIRONMENT=production` (default): `https://signin-<region>.aliyunagentid.com`. The form is chosen **automatically by `ENVIRONMENT`**; you can still override `SIGNIN_BASE_URL` explicitly — an explicit value always wins |
+| Pool discovery / JWKS `POOL_JWKS_BASE` | Left empty (default) → served on `DATA_ENDPOINT` | **Only when `ENVIRONMENT=production` is explicitly declared** in `.env` → auto-mirrored from `SIGNIN_BASE_URL` (the data-plane path returns 404 in production). If `ENVIRONMENT` is absent or `pre-release`, stays empty (legacy behavior). A `[env]` warning is printed to stderr when mirroring occurs. Override `POOL_JWKS_BASE` explicitly if your environment differs |
 | Inbound IDaaS identity-source binding | Console only (the API accepts DingTalk / Feishu / WeCom types only) | Also console-only; additionally add `https://signin-<region>.aliyunagentid.com/<poolId>/sso/oidc/callback` to the **redirect whitelist of the inbound app on the IDaaS side** |
 | OBO audience / scope | — | `ORDER_SERVICE_AUDIENCE` = the enterprise app's own audience identifier (e.g. `test-aud`, not the provider's OutboundAudience); `ORDER_SERVICE_SCOPES` must be a subset of the app's authorized scopes (see the table above) |
 | Data-plane RPC stability | Occasional `MissingParameter.*` during rolling-release windows (the sample auto-retries through) | Mixed old/new instances: an occasional `MissingParameter.Audience` is usually a misleading error from an old instance or an expired WAT — retry through / get a fresh WAT and read the real error code |
@@ -393,13 +526,23 @@ The demo (or the four steps) succeeded when all of the following hold:
 5. Negative checks (optional): `curl http://127.0.0.1:9090/orders` without a
    token → `401 invalid_request`; with a tampered token → `401
    invalid_token` (the response never echoes the token body).
-6. **Offline test suite** (no network, no third-party dependencies): from
-   this sample's directory run `python3 -m unittest discover -s tests` —
-   all green confirms the sample logic itself is intact.
+6. **Offline test suite** (no network, pure standard library): from this
+   sample's directory run `python3 -m unittest discover -s tests` — all green
+   confirms the sample logic itself is intact.
 
 Cleanup when done — the command deletes **only resources recorded in
 `.tokens/created_resources.json`** (written by `setup --mode=script`), never
-raw `.env` names, so manually-configured resources are never touched:
+raw `.env` names, so manually-configured resources are never touched.
+
+**Identity echo (safety visibility)**: before the confirmation prompt,
+`cleanup` prints the credential identity that will be used (masked AK ≤4 chars
++ source). Since `.env` may have no AK/SK at all (credential chain), **always
+verify the echoed identity matches the account you intend to operate on** —
+the resource-name manifest constrains *what* gets deleted but not *which
+account* executes the deletion. `cleanup --from-env` (the escape hatch)
+additionally prints a prominent `⚠️` warning: it does not verify resource
+ownership and the identity comes from the local credential chain (possibly any
+profile).
 
 ```bash
 python3 sample.py cleanup            # prints the manifest, asks for confirmation; --yes skips the prompt

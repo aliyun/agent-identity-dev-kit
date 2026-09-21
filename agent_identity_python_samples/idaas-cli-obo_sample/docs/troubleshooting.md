@@ -11,6 +11,70 @@ background.
 本表提供完整背景。
 通用排查第一步永远是：`python3 sample.py --check`。
 
+> **`--check` 离线口径说明**：默认 `--check` 是**纯离线体检**（亚秒级返回，实测约
+> 0.3–0.4s，含解释器启动；不触发任何网络、不调 `get_credential()`、不刷新 OAuth、不回写
+> `~/.aliyun/config.json`）。它并列报告各级凭据的「能力」（.env 显式配置是否
+> 可用 / SDK 是否已安装 / `~/.aliyun/config.json` 是否可解析），但**不判定最终
+> 生效级**。要精确确认「实际用了哪一级」，运行
+> `python3 sample.py --check --creds-live`（会触发真实解析，可能产生网络
+> 调用 / OAuth 续期 / 回写 `~/.aliyun/config.json` 等副作用）。
+>
+> **认证失败的排查顺序**：凭据可能来自 .env 显式值 / SDK 凭据链 /
+> `~/.aliyun/config.json`，先用 `python3 sample.py --check` 确认各级能力，
+> 再用 `--creds-live` 确认实际命中哪一级（不要把用户引向通常为空的 .env
+> AK/SK）。`--check` 报告还会用「（已派生）」后缀标记程序派生的值，排查
+> 404/NXDOMAIN/域名不符时优先怀疑带「（已派生）」的值。
+
+**`--check` 完整样例输出**（假数据，结构与实跑一致；`…(len=N)` 为 AK 掩码，只露
+前 4 字符 + 长度，绝不打印完整 / 前 8 位）：
+
+```console
+$ python3 sample.py --check
+[check] 环境体检（.env 文件：/path/to/idaas-cli-obo_sample/.env）
+
+  [OK] REGION = ap-southeast-1
+  [OK] ENVIRONMENT = production（已派生）
+  [OK] ALIYUN_ACCESS_KEY_ID (len=24)
+  [OK] ALIYUN_ACCESS_KEY_SECRET (len=30)
+  [OK] CONTROL_ENDPOINT = agentidentity.ap-southeast-1.aliyuncs.com
+  [OK] DATA_ENDPOINT = agentidentitydata.ap-southeast-1.aliyuncs.com
+  [OK] SIGNIN_BASE_URL = https://signin-ap-southeast-1.aliyunagentid.com
+  ...（其余必填项逐项 [OK] / 可选项 [OPTIONAL-EMPTY]）...
+  [OK] IDAAS_ORIGIN = https://idaas-example.cloud-idaas.com
+
+[check] ENVIRONMENT 生效值：production（来源：未在 .env/环境变量声明，默认 production）
+
+[check] 体检通过：必填项齐全。下一步可运行 python3 sample.py login
+
+[check] 凭据链状态（离线体检：不触发网络 / 刷新 / 写盘）：
+  [1] .env 显式 ALIYUN_ACCESS_KEY_*：命中（最高优先，实际生效）
+      AK=LTAI…(len=24)，含 STS=否
+  [2] alibabacloud_credentials SDK：已安装（离线口径不调用 get_credential()，
+      实际是否命中请用 --creds-live 确认）
+  [3] 标准库 ~/.aliyun/config.json（只读）：可解析
+      AK=LTAI…(len=24)，含 STS=否，来源=~/.aliyun/config.json(profile=default, mode=AK)
+  提示：离线体检只报告各级「能力」，不判定最终生效级（SDK 级需真实调用）。
+       运行 python3 sample.py --check --creds-live 获取精确命中级别与来源。
+
+[check] 令牌产物（.tokens/，0600）：
+  [ABSENT] id_token（尚未生成）
+  [ABSENT] wat（尚未生成）
+  [ABSENT] order_at（尚未生成）
+  order_rt: 不存在
+```
+
+> **`--check` 退出码语义**：`--check` 仅在「必填项齐全」**且**「凭据链
+> 体检无确定性配置错误」时返回 `0`，否则返回 `1`（便于 CI 门禁据退出码拦截）。
+> 确定性配置错误仅指两类：① 显式 AK/SK 半填（只填一项）——离线与
+> `--creds-live` 两模式**一致**计入；② 标准库
+> `~/.aliyun/config.json` 当前 profile 的 STS 凭据已过期**且该级可达**
+> （Level 1 命中时 Level 3 的陈旧过期状态不计入——三级链是短路语义，
+> 不可达级不影响生效凭据）。以下**不**计入、仍返回
+> `0`：两项显式 AK/SK 都留空（推荐的走凭据链姿势）、SDK 已安装但离线口径未调用、
+> `~/.aliyun/config.json` 缺席（合法的无标准库配置姿势）。报告正文不因退出码变化
+> 而改变（结论行「体检通过 / 未通过」只反映必填项）。`--creds-live` 的其余真实解析失败
+> （网络抖动、SDK 刷新失败等运行时/环境态）不计入退出码。
+
 ---
 
 ## 1. Login / 登录链路（数据面第 1 步）
@@ -50,7 +114,7 @@ background.
 | `ServiceUnavailable`（调 ListOAuth2CredentialProviders 时） | 该接口**带 PageNumber/PageSize 分页参数即报错**（预发实测 5 次重试一致） | List 调用**不带分页参数**；sample 已按此实现 |
 | 白名单丢条目（redirect_uri 越改越少） | 两个叠加因素：① aliyun CLI 多值参数须传 **JSON 数组单参数**（`'["a","b"]'`），空格分隔只取第一个值（**静默截断**）；② `UpdateUserPoolClient` 是**整体替换**语义 | 任何白名单写操作前先留档原值，写后**必读校验**；sample 已实现「保留原有条目合并 + 写后必读」 |
 | `SignatureDoesNotMatch` / `IncompleteSignature` | RPC V1 签名细节错误：percentEncode 的 `safe="~"` 用错、formData 展开规则不符（dict→`k.sub`、list→`k.N` 从 1 起）、STS 场景 `SecurityToken` 未并入签名集合、Timestamp 格式非 UTC `%Y-%m-%dT%H:%M:%SZ` | 对照 [architecture.md 的签名一节](./architecture.md#zero-dependency-rpc-v1-signing)逐项自查；sample 的 `lib/rpc.py` 已实测通过 |
-| `InvalidAccessKeyId` / `InvalidSecurityToken` | AK 失效/无权限，或 STS 临时凭证过期 | 检查 `.env` 的 `ALIYUN_ACCESS_KEY_*`；STS 注意时效与 `ALIYUN_SECURITY_TOKEN` 是否填对 |
+| `InvalidAccessKeyId` / `InvalidSecurityToken` | 凭据过期或无权限 | 凭据可能来自 .env 显式值 / SDK 凭据链 / `~/.aliyun/config.json`，先用 `python3 sample.py --check` 确认各级能力，再用 `--creds-live` 确认实际命中哪一级。显式层查 `.env` 的 `ALIYUN_ACCESS_KEY_*`（含 `ALIYUN_SECURITY_TOKEN` 时效）；SDK/标准库层查 `aliyun configure` 的 profile 是否有效、RAM 权限是否齐（详见第 6 节凭据链） |
 | `Throttling.*` | 触发限流 | sample 已自动指数退避重试；仍失败等 1 分钟后重跑 |
 | SSO 编排等待超时（SSOStatus 长时间非 Enabled） | 绑定 → SCIM 配置 → SSO 配置三相位编排中，个别相位失败或卡住 | 到控制台查看身份源编排相位；完成后重跑 setup（幂等续跑） |
 
@@ -58,18 +122,40 @@ background.
 
 | 错误码 / 现象 | 根因 | 处置 |
 |---|---|---|
-| `401 invalid_token`（签名/`iss`/`aud`/`exp` 校验失败） | 令牌与 `.env` 三个验签配置不一致：`ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_AUDIENCE` / `ORDER_SERVICE_JWKS_URI` | 三项取值一律来自 **IDaaS (EIAM) discovery**（`GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` 的 `issuer` / `jwks_uri`）；401 响应里的 `error_description` 会写明具体是哪项不符 |
+| `401 invalid_token`（签名/`iss`/`aud`/`exp` 校验失败） | 令牌与验签配置不一致：`ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_AUDIENCE` / `ORDER_SERVICE_JWKS_URI` | `ISSUER`/`JWKS_URI` 由 `IDAAS_ORIGIN` 自动拉 discovery 填充（`GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` 的 `issuer` / `jwks_uri`），**无需手工抄**；`AUDIENCE` 手工填（企业应用自身标识）。若 discovery 拉取失败（抛 `DiscoveryError`），检查 `IDAAS_ORIGIN` 是否正确、网络是否可达；401 响应里的 `error_description` 会写明具体是哪项不符 |
 | `401`：JWKS 中不存在 `kid` 的公钥 | JWKS 取错源（用了池 JWKS 而非 IDaaS JWKS），或密钥刚轮换 | 确认 `ORDER_SERVICE_JWKS_URI` 用的是 IDaaS 公网 discovery 值；sample 缓存 300s、未命中会强制刷新一次 |
 | `403 insufficient_scope`（POST /orders 被拒） | 令牌 scope 不含 `write.all`（预期行为，演示权限差异） | 在 `.env` 的 `ORDER_SERVICE_SCOPES` 加上对应 scope 后重跑 `obo`；或用 GET /orders 验证读链路 |
 | `GET /orders` 返回本人订单为空（`scope_view=own`、`count=0`） | 你的真实 `sub` 与内置示意身份（employee-alice 等）不同，属预期「未知用户」行为 | 把 login 打印的 `sub` 填进 `orders/mock_data.py` 的 `SUB_ALIAS`（如 `{"user_xxxxxxxx…": "employee-alice"}`），或换两个不同账号跑 demo 对比 |
 | `503 temporarily_unavailable` | JWKS 端点拉取失败（服务端依赖故障，不是令牌问题） | 检查 `ORDER_SERVICE_JWKS_URI` 公网可达性（vpc 域名公网不可达，见下节） |
+| `DiscoveryError`：「不同源」 | discovery 返回的 `issuer`/`jwks_uri` 与 `IDAAS_ORIGIN` 不同源（防 SSRF / issuer 混淆） | 同源校验用归一后的 `(host, port)` 比较：显式 `:443`、末尾点 FQDN、punycode、IPv6 均接受（语义等价）；跨 host、http、`user:password@` 嵌入均拒绝。确认 `IDAAS_ORIGIN` 指向正确的 IDaaS 实例域名根 |
 
 ## 5. Local environment / 本地环境与域名
 
 | 错误码 / 现象 | 根因 | 处置 |
 |---|---|---|
 | DNS 解析失败（NXDOMAIN），域名为 `vpc` 前缀/后缀形态 | **池 discovery 返回的 issuer/jwks_uri 指向 VPC 专用域名，公网不可解析**（预发实测 NXDOMAIN） | 公网场景改用等价公网路径：池 JWKS 预发用 `https://{DATA_ENDPOINT}/{USER_POOL_ID}/oauth2/jwks`（正式环境该路径走登录域，见 README「区域/环境差异」一节）；订单服务验签直接用 IDaaS 公网 discovery 值 |
-| 请求打到错误域名（404 / MissingParameter 诡异出现） | **双域名坑**：token 兑换必须走 `SIGNIN_BASE_URL`（登录域）；discovery / JWKS 的域名**因环境而异**（预发走 `DATA_ENDPOINT`；正式环境如新加坡走登录域——配 `POOL_JWKS_BASE`）；WAT/OBO RPC 走数据面域名；setup/cleanup 走控制面域名 | 对照 [architecture.md 的双域名表](./architecture.md#the-dual-domain-pitfall)核对 `.env` 的端点配置 |
+| 请求打到错误域名（404 / MissingParameter 诡异出现） | **双域名坑**：token 兑换走 `SIGNIN_BASE_URL`（登录域）；discovery / JWKS 的域名**因环境而异**（预发走 `DATA_ENDPOINT`；正式环境如新加坡走登录域，但仅当 `ENVIRONMENT=production` **被显式声明**时 `POOL_JWKS_BASE` 才自动镜像为登录域，否则保持留空走 `DATA_ENDPOINT`）；WAT/OBO RPC 走数据面域名；setup/cleanup 走控制面域名 | 端点由 `REGION` + `ENVIRONMENT` **自动派生**，订单服务 issuer/jwks 由 `IDAAS_ORIGIN` discovery **自动拉取**，一般无需手工填。若仍打错域：检查 `REGION`/`ENVIRONMENT` 是否填对，用 `--check` 确认哪些值带「（已派生）」标记，或对照 [architecture.md 的双域名表](./architecture.md#the-dual-domain-pitfall)显式覆盖 `SIGNIN_BASE_URL`/`POOL_JWKS_BASE` |
 | Python 3.12+ 下 HTTPS 请求报证书错误 | `urllib` 无系统 CA 可用 | 安装可选依赖 `pip install certifi`（sample 检测到无系统 CA 时会自动尝试 certifi；不装也能跑通其余链路） |
 | 终端长命令输出偶发丢失 | 环境抖动，非 sample 问题 | 关键输出 sample 已落盘 `.tokens/` 与 RequestId；可用 `python3 sample.py --check` 复查状态 |
 | 远程/无 GUI 环境中浏览器打不开（login 卡在等待回调） | `webbrowser.open` 在 ssh 会话/无桌面环境没有可渲染的浏览器，回调服务仍在远程机上监听 loopback | 端口转发到本地：`ssh -L 8765:127.0.0.1:8765 <user>@<host>`（端口按实际 `--port` 调整），然后在**本地浏览器**手动打开 login 终端打印的 authorize URL——回调会经转发命中远程 CLI 的 loopback 服务 |
+
+## 6. 凭据链 / Credentials（AK/SK/STS 解析）
+
+样例经**三级降级链**解析凭据（详见 README「🔑 凭据链（三选一）」与
+[architecture.md 的凭据链一节](./architecture.md#credentials--configuration-loading)）：
+`.env` 显式 `ALIYUN_ACCESS_KEY_*`（最高优先，**两项必须同时填或同时留空**，
+只填一项直接报 `CredentialError`）→ SDK `alibabacloud_credentials`
+默认链 → 纯标准库读 `~/.aliyun/config.json`。
+
+`python3 sample.py --check`（离线口径）并列报告各级能力，不判定最终生效级；
+`python3 sample.py --check --creds-live` 执行真实解析，报告精确命中级别与来源。
+
+| 错误码 / 现象 | 根因 | 处置 |
+|---|---|---|
+| `--check` 显示凭据来自「标准库」而非「SDK」 | 未安装 `alibabacloud_credentials`（ImportError），自动降级到标准库读 `~/.aliyun/config.json` | 属预期降级行为，不影响运行；想要 OAuth 自动后台刷新则 `pip install -r requirements.txt` 走 SDK 主路径 |
+| `CredentialError`：STS 凭据已过期（`sts_expiration`…） | OAuth/StsToken profile 缓存的 STS 已过期，而标准库降级路径**不做 refresh** | 二选一：① `pip install -r requirements.txt` 走 SDK 自动刷新（推荐）；② `aliyun configure` 重新登录刷新 STS 缓存 |
+| `CredentialError`：未找到 / 无法解析 `~/.aliyun/config.json` | 从未执行过 `aliyun configure`，或配置文件损坏/权限不对/缺 `current` 字段 | 确认已 `aliyun configure` 且 `~/.aliyun/config.json` 存在；`aliyun configure list` 检查 profile；也可在 `.env` 显式填 `ALIYUN_ACCESS_KEY_ID/SECRET`（最高优先） |
+| `CredentialError`：profile `mode` 不在支持范围（如 RamRoleArn/EcsRamRole） | 标准库降级路径仅支持 AK/StsToken/OAuth 三种 mode | `pip install -r requirements.txt` 走 SDK 主路径（支持全部 mode），或改配 AK/StsToken profile |
+| `InvalidAccessKeyId` / `InvalidSecurityToken`（RPC 返回） | 凭据过期或无权限 | 用 `sample.py --check --creds-live` 确认实际命中级别；显式层查 `.env` 的 `ALIYUN_ACCESS_KEY_*`（含 `ALIYUN_SECURITY_TOKEN` 时效）；SDK/标准库层查 `aliyun configure` 的 profile 是否有效、RAM 权限是否齐 |
+| `CredentialError`：半填（只填了 `ALIYUN_ACCESS_KEY_ID` 或 `ALIYUN_ACCESS_KEY_SECRET` 其中一项） | 两项必须同时填或同时留空；只填一项**不再静默降级**，直接报错（防止管控面用另一个账号的身份执行创建/删除） | 两条出路：① 补齐另一项；② 两项都清空，显式声明走凭据链（`aliyun configure` 一次即可） |
+| 环境变量填了却不生效 | 显式层认 `ALIYUN_ACCESS_KEY_*`；SDK 链内部认 `ALIBABA_CLOUD_*`，两套命名不通用 | 显式覆盖用 `ALIYUN_ACCESS_KEY_*`；走 SDK 链则用 `aliyun configure` 或 `ALIBABA_CLOUD_*` |

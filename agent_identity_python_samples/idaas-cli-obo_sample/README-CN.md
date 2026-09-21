@@ -1,8 +1,8 @@
 # Agent Identity × IDaaS：入站联邦登录 + OBO 出站（CLI 样例）
 
-一个零依赖的 CLI 样例，完整演示 **Agent Identity × IDaaS** 全链路：企业员工经 IDaaS 联邦登录进入 Agent Identity 用户池，身份从「人」升维为「工作负载」（Workload Access Token），再以 on-behalf-of 方式换取下游 OAuth2 令牌，由模拟订单服务按调用者身份返回**差异化数据**。纯 Python 3.9+ 标准库实现，**零第三方运行时依赖**。
+一个 CLI 样例，完整演示 **Agent Identity × IDaaS** 全链路：企业员工经 IDaaS 联邦登录进入 Agent Identity 用户池，身份从「人」升维为「工作负载」（Workload Access Token），再以 on-behalf-of 方式换取下游 OAuth2 令牌，由模拟订单服务按调用者身份返回**差异化数据**。纯 Python 3.9+ 标准库即可独立运行；可选安装 `alibabacloud-credentials`（Python 3.10+）启用 aliyun CLI 凭据链自动后台刷新。
 
-> 📖 深入阅读：[docs/architecture.md](./docs/architecture.md)（令牌时序、API 映射、RPC 签名）· [docs/control-plane-console.md](./docs/control-plane-console.md)（控制台手把手引导；截图补充中，见该文档顶部说明）· [docs/troubleshooting.md](./docs/troubleshooting.md)（全部已知坑位）。
+> 📖 深入阅读：[docs/architecture.md](./docs/architecture.md)（令牌时序、API 映射、RPC 签名）· [docs/control-plane-console.md](./docs/control-plane-console.md)（控制台手把手引导，含打码截图）· [docs/troubleshooting.md](./docs/troubleshooting.md)（全部已知坑位）。
 
 ## 🚀 Overview（概述）
 
@@ -58,12 +58,12 @@ flowchart TB
 
 | 条件 | 说明 |
 |------|------|
-| Python 3.9+ | CLI 与模拟订单服务均为纯标准库实现，**零第三方运行时依赖** |
+| Python 3.9+ | CLI 与模拟订单服务纯标准库即可独立运行；可选的凭据链 SDK 需 Python 3.10+ |
 | 操作系统 | 已在 macOS 与 Linux 上验证；Windows 理论可用（纯标准库）但未验证 |
 | 阿里云账号 | 已在目标地域开通 Agent Identity 服务 |
-| AccessKey 一对 | `setup --mode=script` 与数据面 RPC 调用（`exchange-wat`、`obo`）需要；建议使用最小权限 RAM 子账号 |
+| aliyun CLI | **推荐**：`aliyun configure` 一次 → 样例经凭据链自动取凭据，**无需在 `.env` 填 AK/SK**。也可用于诊断 / 等价 API 调用。非硬性必需——样例自行实现了阿里云 RPC V1 签名 |
+| `alibabacloud-credentials`（推荐、可选） | `pip install -r requirements.txt` 启用凭据链**OAuth 自动后台刷新**；不装则自动降级为纯标准库读 `~/.aliyun/config.json`。详见下文**凭据链**一节 |
 | 一个 IDaaS（EIAM）实例 | 至少有一个能完成登录的员工账号 |
-| aliyun CLI（可选） | 仅用于诊断与等价 API 调用——**非必需**：样例自行实现了阿里云 RPC V1 签名 |
 
 ## 📦 Installation（安装）
 
@@ -74,38 +74,128 @@ git clone https://github.com/aliyun/agent-identity-dev-kit
 cd agent_identity_python_samples/idaas-cli-obo_sample
 ```
 
-### 2. 生成本地 `.env`
+### 2.（推荐）配置凭据 + 安装可选 SDK
+
+```bash
+aliyun configure                   # 一次登录（OAuth / AK）→ 写入 ~/.aliyun/config.json
+pip install -r requirements.txt     # 可选：启用凭据链自动刷新
+```
+
+凭据只需 `aliyun configure` 一次——样例经**凭据链**自动读取，**无需在
+`.env` 填 AK/SK**。装 `requirements.txt`（可选的 `alibabacloud-credentials`
+SDK）可开启 OAuth 自动后台刷新；不装则降级为纯标准库读
+`~/.aliyun/config.json`。详见下文 **🔑 凭据链（三选一）** 一节。
+
+### 3. 生成本地 `.env`
 
 ```bash
 cp env.template .env
 chmod 600 .env
 ```
 
-### 3. 填写 `.env`
+### 4. 填写 `.env`——只需 **3 项必填**
 
-所有 `<YOUR_...>` 占位符都要替换。各值的来源（`env.template` 注释里有同样的说明，`python3 sample.py --check` 可逐项体检）：
+你手工只需填 **三** 项：
 
 | 变量 | 来源 | 说明 |
 |------|------|------|
-| `REGION` | 控制台右上角 | 地域 ID，如 `cn-hangzhou` |
-| `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` | RAM 控制台 → AccessKey 管理 | AK 对；`setup --mode=script`、`exchange-wat`、`obo` 使用 |
-| `ALIYUN_SECURITY_TOKEN` | （可选）STS | 使用临时凭证时填写 |
-| `CONTROL_ENDPOINT` | —（通用形态） | 控制面端点，`agentidentity.<region>.aliyuncs.com` |
-| `DATA_ENDPOINT` | —（通用形态） | 数据面端点，`agentidentitydata.<region>.aliyuncs.com` |
-| `SIGNIN_BASE_URL` | 用户池详情页 | 池 OAuth 登录根地址，如 `https://signin.<region>.aliyuncs.com`（预发）或正式环境的登录域 |
-| `POOL_JWKS_BASE` | （可选） | 池 discovery / JWKS 的域名根。默认（留空）走 `DATA_ENDPOINT`（预发行为）；若所在环境的池 discovery/JWKS 走登录域（如新加坡 `ap-southeast-1` 正式环境，数据面同路径 404），填登录域地址，可与 `SIGNIN_BASE_URL` 相同。 |
-| `USER_POOL_ID` | setup 产出 / 控制台 | 用户池 ID（`up_...`） |
-| `OAUTH_CLIENT_ID` | setup 产出 / 控制台 | 池 OAuth 客户端 ID（`client_...`） |
-| `OAUTH_CLIENT_SECRET` | setup 产出 / 控制台 | 池 OAuth 客户端密钥（也可用 `OAUTH_CLIENT_SECRET_FILE` 指向 0600 文件） |
-| `OAUTH_REDIRECT_URI` | — | 回调地址，默认 `http://127.0.0.1:8765/callback` |
-| `WI_NAME` | setup 产出 / 控制台 | 工作负载身份名——必须开启会话绑定 |
-| `OBO_PROVIDER_NAME` | setup 产出 / 控制台 | 出站 OAuth2 凭证提供商名 |
-| `ORDER_SERVICE_AUDIENCE` | IDaaS 控制台 → 该企业服务应用详情页 | **企业服务应用自身的 audience 标识**（如 `test-aud` 这类值）；**不是** OBO provider 的 OutboundAudience（`agent-…` 形态）——误传将报 `Forbidden.IdaasRsNotAuthorized`（正式环境实测） |
-| `ORDER_SERVICE_SCOPES` | —（可选） | 逗号分隔，默认 `read,write.all`；必须是目标应用**已授权 scope 的子集**——超出报 `Forbidden.ScopeNotGranted`（正式环境实测，排查时逐个删减做最小化实验） |
-| `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | IDaaS discovery 文档 | `GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` 返回的 `issuer` / `jwks_uri`（公网可达） |
-| `SETUP_*` | —（仅模式 B） | `setup --mode=script` 的资源命名与 provider 配置，见 `env.template` 注释 |
+| `REGION` | 控制台右上角 | 地域 ID，如 `ap-southeast-1` |
+| `ORDER_SERVICE_AUDIENCE` | IDaaS 控制台 → 该企业服务应用详情页 | 企业服务应用**自身的 audience 标识**（如 `test-aud`）——**不是** OBO provider 的 OutboundAudience（`agent-…` 形态） |
+| `IDAAS_ORIGIN` | 你的 IDaaS 实例域名根 | 如 `https://xxx.cloud-idaas.com`；用于自动拉 OIDC discovery 文档填充 `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` |
+
+其余全部**自动**：
+
+- `REGION` + `ENVIRONMENT` 派生端点（`CONTROL_ENDPOINT`、`DATA_ENDPOINT`、`SIGNIN_BASE_URL`）。
+  `POOL_JWKS_BASE` **仅在用户显式声明 `ENVIRONMENT=production`** 时才镜像为
+  `SIGNIN_BASE_URL`；若该行缺失或为 `pre-release`，`POOL_JWKS_BASE` 保持留空，
+  池 discovery/JWKS 走 `DATA_ENDPOINT`（存量向后兼容行为）。
+- `IDAAS_ORIGIN` → 运行时拉 OIDC discovery 文档自动填充 `ORDER_SERVICE_ISSUER`
+  / `ORDER_SERVICE_JWKS_URI`（懒触发——仅 `demo` / `serve-orders` / `setup`
+  末尾；`login`、`--check`、`exchange-wat`、`obo` 不触发）。
+  discovery 响应经同源校验（防 SSRF / issuer 混淆）：`issuer`/`jwks_uri` 的
+  `(host, port)` 必须与 `IDAAS_ORIGIN` 归一后一致。语义等价写法（显式 `:443`、
+  末尾点 FQDN、punycode、IPv6）均接受；跨 host、http、`user:password@` 嵌入均拒绝。
+- `USER_POOL_ID`、`OAUTH_CLIENT_ID`、`OAUTH_CLIENT_SECRET`、`WI_NAME`、
+  `OBO_PROVIDER_NAME` 由 `setup --mode=script` 自动回写 `.env`（连同 discovery
+  拉到的 issuer/JWKS）。
+- 凭据走凭据链——`ALIYUN_ACCESS_KEY_*` 留空即可。
+- `OAUTH_REDIRECT_URI`、`ORDER_SERVICE_SCOPES`、`SETUP_*` 维持默认值。
+
+完整变量参考（除标 **必填** 外均为可选；`env.template` 注释里有同样说明，
+`python3 sample.py --check` 可逐项体检）：
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `REGION` | **是** | 地域 ID，如 `ap-southeast-1`（控制台右上角） |
+| `ORDER_SERVICE_AUDIENCE` | **是** | 企业服务应用**自身的 audience 标识**（如 `test-aud`）；**不是** OBO provider 的 OutboundAudience（`agent-…` 形态）——误传报 `Forbidden.IdaasRsNotAuthorized`（正式环境实测） |
+| `IDAAS_ORIGIN` | **是** | IDaaS 实例域名根（如 `https://xxx.cloud-idaas.com`）；自动拉 discovery 文档填充 `ORDER_SERVICE_ISSUER`/`JWKS_URI`。若已显式填 `ORDER_SERVICE_ISSUER` 可留空（会反向推导） |
+| `ENVIRONMENT` | 否 | `production` / `pre-release`（大小写不敏感、自动去首尾空格；其余值报 `EnvError`）。决定 `SIGNIN_BASE_URL` 的派生形态。**`POOL_JWKS_BASE` 仅在本键被「显式声明」为 `production` 时才镜像**；缺失/留空 = 存量行为（POOL_JWKS_BASE 留空）。显式填 `SIGNIN_BASE_URL`/`POOL_JWKS_BASE` 则覆盖 |
+| `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` | 否 | **可选**：两项留空走 aliyun CLI 凭据链（推荐）；显式填写最高优先（向后兼容/CI）。**两项必须同时填或同时留空**——只填一项直接报 `CredentialError`（不再静默降级）。详见 **🔑 凭据链** |
+| `ALIYUN_SECURITY_TOKEN` | 否 | 仅显式分支的 STS 令牌（用长期 AK 则留空） |
+| `CONTROL_ENDPOINT` / `DATA_ENDPOINT` | 否 | 留空→由 `REGION` 自动派生（`agentidentity.<region>.aliyuncs.com` / `agentidentitydata.<region>.aliyuncs.com`） |
+| `SIGNIN_BASE_URL` | 否 | 留空→由 `REGION` + `ENVIRONMENT` 自动派生（production：`https://signin-<region>.aliyunagentid.com`；pre-release：`https://signin.<region>.aliyuncs.com`） |
+| `POOL_JWKS_BASE` | 否 | 留空→**仅当 `ENVIRONMENT=production` 被显式声明时**自动镜像为 `SIGNIN_BASE_URL`；否则（缺失/pre-release）保持留空，池 discovery/JWKS 走 `DATA_ENDPOINT`（向后兼容）。显式填写则最高优先 |
+| `USER_POOL_ID` / `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | 自动 | 由 `setup --mode=script` 回写，或控制台抄录（也可用 `OAUTH_CLIENT_SECRET_FILE` 指向 0600 文件） |
+| `OAUTH_REDIRECT_URI` | 自动（有默认值） | 默认 `http://127.0.0.1:8765/callback` |
+| `WI_NAME` / `OBO_PROVIDER_NAME` | 自动 | 由 `setup --mode=script` 回写，或控制台抄录（WI 须开启会话绑定） |
+| `ORDER_SERVICE_SCOPES` | 否 | 逗号分隔，默认 `read,write.all`；必须是目标应用**已授权 scope 的子集**——超出报 `Forbidden.ScopeNotGranted`（正式环境实测） |
+| `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | 否 | 留空→运行时由 `IDAAS_ORIGIN` discovery 文档自动填充，**无需手工抄**；若 IDaaS 实例自定义了 issuer 路径，discovery 会取到权威值 |
+| `SETUP_*` | 否 | `setup --mode=script` 的资源命名与 provider 配置；维持默认——除 `SETUP_OBO_PROVIDER_CONFIG` 需指向 IDaaS 侧订单服务应用 |
 
 > 模拟订单服务用纯标准库实现了 RS256 验签（教学实现）；生产代码请使用 PyJWT + cryptography。
+
+## 🔑 凭据链（三选一）
+
+样例通过**三级降级链**解析阿里云 RPC 凭据（`lib/credentials.py` →
+`resolve_creds`），越靠前优先级越高，命中即返回：
+
+| # | 级别 | 前提 | 行为 |
+|---|---|---|---|
+| 1 | `.env` **显式 AK/SK** | `ALIYUN_ACCESS_KEY_ID` / `ALIYUN_ACCESS_KEY_SECRET` 非占位 | 直接使用；`ALIYUN_SECURITY_TOKEN` 非空则并入。**最高优先**——向后兼容 / CI / 教学固定凭证 |
+| 2 | **SDK 默认链**（`alibabacloud_credentials`） | 已 `pip install -r requirements.txt` | `CredentialClient()` 默认链：读 `~/.aliyun/config.json`；OAuth profile 凭 refresh_token **非交互后台刷新**。推荐 |
+| 3 | **标准库降级** | 上两级都未命中 | 纯标准库解析 `~/.aliyun/config.json`（`current` profile）：`AK` / `StsToken` / `OAuth` 三种 mode。无需任何第三方包 |
+
+**OAuth 降级边界**：第 3 级（标准库）**不做刷新**。若缓存的 OAuth/StsToken
+STS 凭据已过期，会抛带指引的 `CredentialError`，而非静默用过期凭据。两条
+出路：`pip install -r requirements.txt` 让 SDK 自动刷新（第 2 级），或重跑
+`aliyun configure` 重新登录。
+
+**环境变量命名差异**（分层不同，勿混淆）：
+
+- 显式层（第 1 级）认 sample 的 `ALIYUN_ACCESS_KEY_ID` /
+  `ALIYUN_ACCESS_KEY_SECRET` / `ALIYUN_SECURITY_TOKEN`。
+- SDK 链（第 2 级）内部认 `ALIBABA_CLOUD_ACCESS_KEY_ID` /
+  `ALIBABA_CLOUD_ACCESS_KEY_SECRET` / `ALIBABA_CLOUD_SECURITY_TOKEN`
+  （`ALIBABA_CLOUD_*` 前缀，由 SDK 自行处理）。
+
+**推荐做法**：`aliyun configure` 一次（OAuth 登录）**+** `pip install -r
+requirements.txt`——样例即可自动后台刷新认证，**`.env` 无任何私密信息**。
+
+**半填硬失败**：`ALIYUN_ACCESS_KEY_ID` 与 `ALIYUN_ACCESS_KEY_SECRET`
+**两项必须同时填或同时留空**。只填一项直接报 `CredentialError`（消息含缺失项名
++ 两条出路：补齐另一项 / 两项都清空以显式声明走凭据链），**不再静默降级**——
+因为静默降级可能让管控面用另一个账号的身份执行创建/删除。
+
+**`--check` 凭据链报告**（默认离线口径）：`python3 sample.py --check` 是
+**纯离线体检**（亚秒级返回，实测约 0.3–0.4s，含解释器启动；不触发网络 / OAuth
+刷新 / 不回写 `~/.aliyun/config.json`）。并列报告各级「能力」——第 1 级只读判定 .env 显式
+配置；第 2 级只报 SDK 是否已安装（不调 `get_credential()`）；第 3 级只读解析
+`~/.aliyun/config.json` + STS 过期判定。**不判定最终生效级**。
+叠加 `--creds-live` 做真实解析：`python3 sample.py --check --creds-live`
+执行完整凭据链，报告**精确命中级别 + 人读来源**（SDK 级显示
+`provider_name`，标准库级显示 `~/.aliyun/config.json(profile=X, mode=Y)`），
+可能触发网络 / OAuth 续期 / 回写 `~/.aliyun/config.json`。
+
+**退出码语义**：`--check` 仅在「必填项齐全」**且**「凭据链体检无确定性
+配置错误」时返回 `0`，否则返回 `1`（便于 CI 门禁据退出码拦截）。确定性配置错误
+仅指：显式 AK/SK 半填（离线与 `--creds-live` 两模式**一致**计入）、标准库
+`~/.aliyun/config.json` profile 的 STS 凭据已过期**且该级可达**（Level 1 命中时
+Level 3 的陈旧过期状态不计入——三级链是短路语义，不可达级不影响生效凭据）。
+两项显式 AK/SK 都留空（推荐的走凭据链姿势）、SDK 已安装但未调用，均返回 `0`。
+完整 `--check` 样例输出与退出码细则见 [docs/troubleshooting.md](./docs/troubleshooting.md)。
+
+`--check` 报告还会用「（已派生）」后缀标记程序派生的值（非用户实填）。排查
+404 / NXDOMAIN / 域名不符时，优先怀疑带「（已派生）」的值。
 
 ## 🔧 Resource Setup（管控面资源配置——两种方式二选一）
 
@@ -115,7 +205,7 @@ chmod 600 .env
 
 运行 `python3 sample.py setup --mode=console` 打印编号清单，然后照着
 **[docs/control-plane-console.md](./docs/control-plane-console.md)** 操作——
-带打码截图的 6 大步手把手引导（截图补充中，见该文档顶部说明）：
+带打码截图的 6 大步手把手引导（打码截图已入库 `docs/images/`）：
 
 1. 创建用户池 → 记录 `USER_POOL_ID`（同时在用户池详情页取 `SIGNIN_BASE_URL`）。
 2. 绑定 IDaaS 身份源，等待编排相位（绑定 → SCIM → SSO）达到已启用。
@@ -128,7 +218,7 @@ chmod 600 .env
    详情页，如 `test-aud`），**不是** provider 的 OutboundAudience（`agent-…`
    形态，误传报 `Forbidden.IdaasRsNotAuthorized`）。
 6. 创建 IdentityProvider（discovery 指向本池）与 WorkloadIdentity（**务必开启会话绑定**）
-   → 记录 `WI_NAME` 及 IDaaS discovery 里的订单服务 issuer/JWKS。
+   → 记录 `WI_NAME`。订单服务的 issuer/JWKS 由 `IDAAS_ORIGIN` 自动拉 discovery 文档填充——无需手工抄录。
 
 ### 方式二：脚本一键（推荐给想快速跑通的用户）
 
@@ -141,6 +231,10 @@ python3 sample.py setup --mode=script          # --with-scim 仅打印 SCIM 配�
 全部成功才把产出回写 `.env`（0600、原子替换）。中途失败不会写入半份
 `.env`——按报错指引处理后重跑即可，已完成步骤会自动跳过。
 
+**身份回显**：`setup` 在第一个写操作之前会打印本次使用的凭据来源与掩码 AK
+（`[setup] 本次使用凭据：…（AK=LTAI…(len=24)，含 STS=否）`），
+便于确认是哪个账号在执行资源创建。
+
 **已知限制（预发 + 新加坡正式环境实测的诚实说明）**：`SetSpecificIdentityProvider`
 的 CLI 帮助当前仅标注支持 **DingTalk** 类型（正式环境实测该 API 仅接受
 DingTalk / Feishu / WeCom，**IDaaS 类型无 API，必须控制台人工绑定**）。脚本
@@ -149,13 +243,17 @@ DingTalk / Feishu / WeCom，**IDaaS 类型无 API，必须控制台人工绑定*
 `SETUP_OBO_PROVIDER_CONFIG`（指向 IDaaS
 订单服务应用的 JSON 配置）需提前填好；凭证提供商**配额 = 1**（已存在则复用）。
 
-**脚本回写什么——以及不回写什么**：脚本只回写其创建的资源（`USER_POOL_ID`、
-`OAUTH_CLIENT_ID`、`OAUTH_CLIENT_SECRET`、`WI_NAME`、`OBO_PROVIDER_NAME`）。
-`SIGNIN_BASE_URL`、`POOL_JWKS_BASE`（正式环境需要时）、`ORDER_SERVICE_AUDIENCE`、
-`ORDER_SERVICE_ISSUER` 与 `ORDER_SERVICE_JWKS_URI` 仍需你按上文表格自行补齐
-（`ORDER_SERVICE_*` 三项需先在 IDaaS 侧创建订单服务应用——见方式一第 5/6 步；
-audience 注意别填成 provider 的 OutboundAudience）。跑 demo 前先执行
-`python3 sample.py --check` 确认配置齐备。
+**脚本回写什么**：脚本回写其创建的资源（`USER_POOL_ID`、`OAUTH_CLIENT_ID`、
+`OAUTH_CLIENT_SECRET`、`WI_NAME`、`OBO_PROVIDER_NAME`）——另外，若配了
+`IDAAS_ORIGIN`，运行末尾还会把 discovery 拉到的 `ORDER_SERVICE_ISSUER` /
+`ORDER_SERVICE_JWKS_URI` 一并回写（两段回写：核心产出**先落盘**，然后
+discovery 成功后第二次只回写 issuer/jwks；任何 discovery 异常不会丢失
+已落盘的 `client_secret`）。端点（`CONTROL_ENDPOINT`、`DATA_ENDPOINT`、
+`SIGNIN_BASE_URL`）由 `REGION` + `ENVIRONMENT` 自动派生；`POOL_JWKS_BASE`
+仅在显式声明 `ENVIRONMENT=production` 时镜像。你手工要填的只有 **3 项必填**（`REGION`、
+`ORDER_SERVICE_AUDIENCE`、`IDAAS_ORIGIN`）——其中订单服务应用需先在 IDaaS 侧
+创建（见方式一第 5/6 步；audience 注意别填成 provider 的 OutboundAudience）。
+跑 demo 前先执行 `python3 sample.py --check` 确认配置齐备。
 
 ### SCIM（v1 不在范围内）
 
@@ -278,6 +376,14 @@ python3 sample.py serve-orders          # 默认端口 9090；Ctrl+C 停止
 含 `read.all` 返回全部订单，否则只返回本人订单）· `POST /orders`（需要
 `write.all`，否则 403）。
 
+> **Fail-closed 启动保护**：`serve-orders` 在 `ORDER_SERVICE_ISSUER`、
+> `ORDER_SERVICE_JWKS_URI` 或 `ORDER_SERVICE_AUDIENCE` 为空/占位时
+> **拒绝启动**——空 issuer 会让验签静默跳过 `iss` 校验（接受任何由该
+> JWKS 签名、aud 匹配的令牌，存在 issuer 混淆 / 跨租户令牌复用风险）。
+> 两条出路：**(A)** 填 `IDAAS_ORIGIN` 让 discovery 自动回填 issuer/jwks；
+> **(B)** 显式填齐三项。`DiscoveryError` 在启动时降级为 stderr 警告
+> （服务仍起，JWKS 不可达时按请求降级 503）。
+
 ### 一键串联 — `demo`
 
 ```bash
@@ -316,8 +422,8 @@ redirect_uri 白名单忽略 loopback 端口差异，无需改控制台配置：
 
 | 事项 | 预发环境 | 正式环境（如新加坡 `ap-southeast-1`） |
 |---|---|---|
-| 登录域 `SIGNIN_BASE_URL` | `https://signin.<region>.aliyuncs.com` 形态 | `https://signin-<region>.aliyunagentid.com`（连字符 + `aliyunagentid.com`；预发为 `pre-signin-<region>.alibabacloudagentid.com`）；一律以用户池详情页展示的地址为准 |
-| 池 discovery / JWKS | 走 `DATA_ENDPOINT` 数据面域（`POOL_JWKS_BASE` 留空即默认） | 走**登录域**（数据面同路径 404）——`POOL_JWKS_BASE` 必须填登录域（可与 `SIGNIN_BASE_URL` 相同） |
+| 登录域 `SIGNIN_BASE_URL` | `ENVIRONMENT=pre-release` 时自动派生：`https://signin.<region>.aliyuncs.com` 形态 | `ENVIRONMENT=production`（默认）时自动派生：`https://signin-<region>.aliyunagentid.com`。形态由 `ENVIRONMENT` **自动选择**；也可显式覆盖 `SIGNIN_BASE_URL`——显式值永远优先 |
+| 池 discovery / JWKS `POOL_JWKS_BASE` | 留空（默认）走 `DATA_ENDPOINT` | **仅当 `.env` 显式声明 `ENVIRONMENT=production`** 时自动镜像为 `SIGNIN_BASE_URL`（数据面同路径 404）。若 `ENVIRONMENT` 缺失或为 `pre-release`，保持留空（存量行为）。镜像发生时会向 stderr 打一行 `[env]` 告警。环境有差异时可显式覆盖 `POOL_JWKS_BASE` |
 | 入站 IDaaS 身份源绑定 | 控制台操作（API 仅 DingTalk / Feishu / WeCom 类型可配置） | 同样必须控制台人工；另需在 **IDaaS 侧入站应用的回跳白名单**中加入 `https://signin-<region>.aliyunagentid.com/<poolId>/sso/oidc/callback` |
 | OBO audience / scope | — | `ORDER_SERVICE_AUDIENCE` = 企业服务应用自身的 audience 标识（如 `test-aud`，非 provider 的 OutboundAudience）；`ORDER_SERVICE_SCOPES` 必须是其已授权 scope 的子集（见上文表格） |
 | 数据面 RPC 稳定性 | 滚动发布窗口偶发 `MissingParameter.*`（sample 自动重试穿透） | 新旧实例混布，偶发 `MissingParameter.Audience` 多为旧实例误导性报错或 WAT 已过期——重试穿透 / 换新 WAT 后看真实错误码 |
@@ -345,12 +451,18 @@ demo（或四步走）成功的标志，全部满足即通过：
    `sub` = 联邦登录的员工。
 5. 反向校验（可选）：`curl http://127.0.0.1:9090/orders` 不带令牌 → 401
    `invalid_request`；带篡改令牌 → 401 `invalid_token`（响应不回显令牌本体）。
-6. **离线测试套件**（无网络、零第三方依赖）：样例目录内执行
+6. **离线测试套件**（无网络、纯标准库）：样例目录内执行
    `python3 -m unittest discover -s tests`——全绿即样例自身逻辑完好。
 
 演示结束后的清理——cleanup **只删除 `.tokens/created_resources.json` 清单内**
 （由 `setup --mode=script` 记录）的资源，绝不直接按 `.env` 名称删，手动配置的
-资源不会被波及：
+资源不会被波及。
+
+**身份回显（安全可见性）**：`cleanup` 在确认提示**之前**会回显本次使用的凭据身份
+（掩码 AK ≤4 字符 + 来源）。改造后 `.env` 可以完全不填 AK/SK，因此**执行破坏性
+cleanup 前务必确认回显的身份是不是你要操作的那个账号**——资源名清单只约束
+「删什么」，不约束「哪个账号执行删除」。`cleanup --from-env`（逃生通道）额外打印
+显著 `⚠️` 警告：该路径不校验资源归属，且身份来自本机凭据链（可能是任意 profile）。
 
 ```bash
 python3 sample.py cleanup            # 打印清单并确认；--yes 跳过确认；幂等可重跑
