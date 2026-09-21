@@ -34,6 +34,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Temporary artifacts (may contain credentials — never commit)
+.tmp*/
+.tmp_*
+
 # Binaries / secrets
 *.wasm
 .env
