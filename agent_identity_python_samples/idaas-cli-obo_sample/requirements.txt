@@ -1,0 +1,13 @@
+# 推荐可选依赖：启用 aliyun CLI 凭据链自动刷新
+# （OAuth profile 凭 refresh_token 非交互刷新，无需手动更新 AK/SK/STS）
+#
+# 缺失时自动降级：标准库读 ~/.aliyun/config.json 已存盘凭据
+# （AK/StsToken profile 正常工作；OAuth profile 过期不做 refresh，抛带指引错误）
+#
+# 安装：pip install -r requirements.txt
+# 跳过（纯标准库降级）：不安装此依赖即可独立运行
+#
+# 版本上界说明：钉 <1.1 —— 已实测通过 1.0.4（.venv）与 1.0.10（系统 python3.12），
+# 二者均为同步 get_credential() 语义、无后台 daemon 线程阻塞 CLI 退出。
+# 1.1+ 未验证（可能改动 provider 链/线程模型），升级前请先跑退出时延测试。
+alibabacloud-credentials>=1.0.4,<1.1
