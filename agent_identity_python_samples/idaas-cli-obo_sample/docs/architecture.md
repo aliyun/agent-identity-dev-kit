@@ -94,8 +94,8 @@ Key points:
 4. **Consumption (steps 12–15)**: the local mock order service pulls the JWKS
    from the IDaaS discovery endpoint (memory-cached 300 s) and verifies the
    bearer token — RS256 signature, `iss`, `aud`, `exp` (60 s clock skew
-   tolerance) — then returns all orders for `read.all`, only the caller's own
-   orders otherwise, and accepts new orders only with `write.all`.
+   tolerance) — then returns all orders for `read:all`, only the caller's own
+   orders otherwise, and accepts new orders only with `write:all`.
 
 ## Subcommand → API mapping
 
@@ -473,7 +473,7 @@ The behavioral contract to preserve when swapping:
    `GetResourceOAuth2Token` **requires** the `formData` style (business
    parameters as an `application/x-www-form-urlencoded` body). Mixing them
    up fails with `MissingParameter.*`.
-2. **`Scopes` is a JSON array string** — `["read","write.all"]` passed as a
+2. **`Scopes` is a JSON array string** — `["write:all"]` passed as a
    single parameter; the `Scopes.1` / `Scopes.2` fan-out form is rejected.
 3. **API versions differ per plane**: `2025-11-27` for the data plane,
    `2025-09-01` for the control plane.

@@ -87,6 +87,7 @@ $ python3 sample.py --check
 | `invalid_grant`（兑换授权码失败） | 授权码**一次性**且有效期短；或兑换时 `redirect_uri` 与 authorize 时**不是逐字符一致** | 重跑 `login` 重新取码；sample 会按实际绑定端口动态构造两侧 URI，手工复现时保持完全一致 |
 | 登录页出现**邮箱 OTP / MFA 二次验证**（预发实测新发现） | EIAM 侧策略变更：kit 早前验证成功后，EIAM 对测试账号新增了 step2 邮箱 OTP 要求（`ia_otp_email` enable=true） | 属预期交互，不是故障：在**浏览器内**按页面引导输入邮箱验证码完成登录；纯 REST/无头自动化会被此步骤阻塞 |
 | 无法监听 `127.0.0.1:8765`（端口占用） | 本机常驻进程（如 IDE collector）占用 8765 | `python3 sample.py login --port 8766` 换端口即可：用户池客户端 redirect_uri 白名单含任意一条 loopback 条目即放行且**忽略端口**，无需回控制台改白名单 |
+| 登录失败：池中无该用户（`access_denied` 或登录页报「用户不存在」） | **用户同步未执行**：步骤 2 中「接入 IDaaS」后未开启同步 / 未执行同步，导致池中无对应账户，联邦登录时找不到用户 | 回控制台步骤 2：开启 SSO 与用户同步、设置同步范围（ou_root）、执行同步，确认池用户列表出现目标账户后重跑 `login`（若池开启了 JIT，首次登录也可自动建档，但推荐先同步） |
 
 ## 2. WAT / OBO（数据面第 2、3 步）
 
@@ -96,12 +97,12 @@ $ python3 sample.py --check
 | `InvalidParameter.JsonWebToken` | 传给 `GetWorkloadAccessTokenForJWT` 的 ID Token 过期或 issuer 不匹配 | 重跑 `login`，成功后**立即**执行后续步骤 |
 | `InvalidParameter.WorkloadAccessToken` / 报错含 "Workload access token is expired" | **WAT 有效期极短（实测约 5 分钟）**，超窗使用 | 重跑 `exchange-wat` 后立即 `obo`；分步调试建议直接用 `demo`（第 2→3 步自动衔接，不等待输入） |
 | WAT 无法本地解码（5 段 JWE 结构，`decode_jwt_payload` 抛段数≠3） | **设计行为**：WAT 是 JWE 加密令牌，本地只应看长度与 RequestId | 无需处置；sample 只打印 `eyJ…(len=N)` 脱敏形态 |
-| `MissingParameter.Scopes` | `Scopes` 传参格式不合法：**逐个传参（`--Scopes.N` 形态）不被接受**，必须是 **JSON 数组字符串** | 传 `["read","write.all"]` 单参数；sample 的 `serialize_scopes` 已按此契约处理 |
+| `MissingParameter.Scopes` | `Scopes` 传参格式不合法：**逐个传参（`--Scopes.N` 形态）不被接受**，必须是 **JSON 数组字符串** | 传 `["write:all"]` 单参数；sample 的 `serialize_scopes` 已按此契约处理 |
 | `MissingParameter.*` 偶发出现且 sample 自动重试（30 次 × 5s） | 预发**滚动发布窗口**抖动：新旧实例对参数绑定短暂不一致 | 等待自动重试完成；重试仍失败说明不是窗口抖动，按具体缺失参数排查（如 Scopes 格式） |
 | `ServiceUnavailable.UpstreamTokenEndpoint` | region 调上游 IDaaS token 端点失败：通常是**出站 provider 侧（IDaaS 订单服务应用）密钥缺失/失效**或授权边不齐 | 检查 `OBO_PROVIDER_NAME` 对应 provider 的配置：IDaaS 侧订单服务应用的密钥、认证方式与应用授权 |
 | 订单服务 401（`aud` 不符，本地验签） | 令牌 `aud` 与 `.env` 验签配置不一致：`ORDER_SERVICE_AUDIENCE` 未取**IDaaS 控制台该企业服务应用详情页的 audience 标识**（如 `test-aud`） | `ORDER_SERVICE_AUDIENCE` 改传企业服务应用自身的 audience 标识（不是 provider 的 OutboundAudience，见下一条）；`iss` / `jwks_uri` 取 IDaaS 公网 discovery 值；401 响应的 `error_description` 会写明具体是哪项不符 |
 | `Forbidden.IdaasRsNotAuthorized`（OBO 被拒） | **`Audience` 误传 OBO provider 的 OutboundAudience**（`agent-app_x…` 形态；正式环境实测曾致数小时排查），或企业服务应用未完成 RS 授权配置 | `ORDER_SERVICE_AUDIENCE` 改传 **IDaaS 该企业服务应用自身的 audience 标识**（控制台应用详情页取值，如 `test-aud`）；确认该应用的授权边 / RS 配置就绪后重跑 `obo` |
-| `Forbidden.ScopeNotGranted`（OBO 被拒） | 请求的 scope **超出**企业服务应用已授权 scope 集合（正式环境实测：应用仅授权 `read` 时带 `write.all` 即报此错） | 做 **scope 最小化实验**：`ORDER_SERVICE_SCOPES` 逐个删减至通过，再按需到 IDaaS 应用侧补授权；注意 Audience 错误未修正前做 scope 实验无意义（先撞 RS 授权墙，看不到真实错误码） |
+| `Forbidden.ScopeNotGranted`（OBO 被拒） | 请求的 scope **超出**企业服务应用已授权 scope 集合（正式环境实测：应用仅授权 `read:all` 时带 `write:all` 即报此错） | 做 **scope 最小化实验**：`ORDER_SERVICE_SCOPES` 逐个删减至通过，再按需到 IDaaS 应用侧补授权；注意 `ORDER_SERVICE_SCOPES` 必须与控制台授权 scope **逐字一致**；Audience 错误未修正前做 scope 实验无意义（先撞 RS 授权墙，看不到真实错误码） |
 | `MissingParameter.Audience`（偶发） | 正式环境数据面**新旧实例混布**的误导性报错，或 WAT 已过期 | 样例自带重试（`wait_window`）可穿透实例混布抖动；重试仍失败则重走 `exchange-wat` 换新 WAT，再看**真实错误码**（正式环境实测） |
 | `EntityNotExists.OAuth2CredentialProvider` 等 | 资源不存在：名称与控制台不一致，或**资产被清理**（预发实测：provider 曾被环境清理；且**配额=1** 被占用） | 核对 `.env` 的 `WI_NAME` / `OBO_PROVIDER_NAME`；重建 provider 前需先删除旧 provider（注意会影响引用它的既有链路） |
 | `EntityAlreadyExists.*` | setup 重跑时资源已存在 | sample 按名复用即可，无需处置；provider 场景如需重建先删旧再建 |
@@ -110,13 +111,14 @@ $ python3 sample.py --check
 
 | 错误码 / 现象 | 根因 | 处置 |
 |---|---|---|
-| `SetSpecificIdentityProvider` 报 `InvalidParameter`（绑定 IDaaS 失败） | aliyun CLI 帮助标注该接口**当前仅支持 DingTalk** 类型（预发实测确认） | 改用**控制台**完成「绑定 IDaaS」（模式 A 第 2 步），完成后重跑 `setup --mode=script`（幂等，会跳过已完成步骤） |
+| `SetSpecificIdentityProvider` 报 `InvalidParameter`（绑定 IDaaS 失败） | aliyun CLI 帮助标注该接口**当前仅支持 DingTalk** 类型（预发实测确认） | 改用**控制台**完成「接入 IDaaS」（模式 A 第 2 步：用户池详情 → 身份源 → 接入 IDaaS），完成后重跑 `setup --mode=script`（幂等，会跳过已完成步骤） |
 | `ServiceUnavailable`（调 ListOAuth2CredentialProviders 时） | 该接口**带 PageNumber/PageSize 分页参数即报错**（预发实测 5 次重试一致） | List 调用**不带分页参数**；sample 已按此实现 |
 | 白名单丢条目（redirect_uri 越改越少） | 两个叠加因素：① aliyun CLI 多值参数须传 **JSON 数组单参数**（`'["a","b"]'`），空格分隔只取第一个值（**静默截断**）；② `UpdateUserPoolClient` 是**整体替换**语义 | 任何白名单写操作前先留档原值，写后**必读校验**；sample 已实现「保留原有条目合并 + 写后必读」 |
 | `SignatureDoesNotMatch` / `IncompleteSignature` | RPC V1 签名细节错误：percentEncode 的 `safe="~"` 用错、formData 展开规则不符（dict→`k.sub`、list→`k.N` 从 1 起）、STS 场景 `SecurityToken` 未并入签名集合、Timestamp 格式非 UTC `%Y-%m-%dT%H:%M:%SZ` | 对照 [architecture.md 的签名一节](./architecture.md#zero-dependency-rpc-v1-signing)逐项自查；sample 的 `lib/rpc.py` 已实测通过 |
 | `InvalidAccessKeyId` / `InvalidSecurityToken` | 凭据过期或无权限 | 凭据可能来自 .env 显式值 / SDK 凭据链 / `~/.aliyun/config.json`，先用 `python3 sample.py --check` 确认各级能力，再用 `--creds-live` 确认实际命中哪一级。显式层查 `.env` 的 `ALIYUN_ACCESS_KEY_*`（含 `ALIYUN_SECURITY_TOKEN` 时效）；SDK/标准库层查 `aliyun configure` 的 profile 是否有效、RAM 权限是否齐（详见第 6 节凭据链） |
 | `Throttling.*` | 触发限流 | sample 已自动指数退避重试；仍失败等 1 分钟后重跑 |
 | SSO 编排等待超时（SSOStatus 长时间非 Enabled） | 绑定 → SCIM 配置 → SSO 配置三相位编排中，个别相位失败或卡住 | 到控制台查看身份源编排相位；完成后重跑 setup（幂等续跑） |
+| 控制台无 Agent Identity 产品入口 / API 报 `InvalidRegionId` | **目标区域未开通 Agent Identity**：并非所有地域均已开放，或账号未完成服务开通 | 登录阿里云控制台搜索「云身份 Agent Identity」确认产品已开通；确认目标地域（如 `eu-central-1`）在支持列表内；若未开通，按控制台引导完成服务开通后重试 |
 
 ## 4. Order service / 订单服务（数据面第 4 步）
 
@@ -124,7 +126,7 @@ $ python3 sample.py --check
 |---|---|---|
 | `401 invalid_token`（签名/`iss`/`aud`/`exp` 校验失败） | 令牌与验签配置不一致：`ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_AUDIENCE` / `ORDER_SERVICE_JWKS_URI` | `ISSUER`/`JWKS_URI` 由 `IDAAS_ORIGIN` 自动拉 discovery 填充（`GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration` 的 `issuer` / `jwks_uri`），**无需手工抄**；`AUDIENCE` 手工填（企业应用自身标识）。若 discovery 拉取失败（抛 `DiscoveryError`），检查 `IDAAS_ORIGIN` 是否正确、网络是否可达；401 响应里的 `error_description` 会写明具体是哪项不符 |
 | `401`：JWKS 中不存在 `kid` 的公钥 | JWKS 取错源（用了池 JWKS 而非 IDaaS JWKS），或密钥刚轮换 | 确认 `ORDER_SERVICE_JWKS_URI` 用的是 IDaaS 公网 discovery 值；sample 缓存 300s、未命中会强制刷新一次 |
-| `403 insufficient_scope`（POST /orders 被拒） | 令牌 scope 不含 `write.all`（预期行为，演示权限差异） | 在 `.env` 的 `ORDER_SERVICE_SCOPES` 加上对应 scope 后重跑 `obo`；或用 GET /orders 验证读链路 |
+| `403 insufficient_scope`（POST /orders 被拒） | 令牌 scope 不含 `write:all`（预期行为，演示权限差异） | 在 `.env` 的 `ORDER_SERVICE_SCOPES` 加上对应 scope 后重跑 `obo`；或用 GET /orders 验证读链路 |
 | `GET /orders` 返回本人订单为空（`scope_view=own`、`count=0`） | 你的真实 `sub` 与内置示意身份（employee-alice 等）不同，属预期「未知用户」行为 | 把 login 打印的 `sub` 填进 `orders/mock_data.py` 的 `SUB_ALIAS`（如 `{"user_xxxxxxxx…": "employee-alice"}`），或换两个不同账号跑 demo 对比 |
 | `503 temporarily_unavailable` | JWKS 端点拉取失败（服务端依赖故障，不是令牌问题） | 检查 `ORDER_SERVICE_JWKS_URI` 公网可达性（vpc 域名公网不可达，见下节） |
 | `DiscoveryError`：「不同源」 | discovery 返回的 `issuer`/`jwks_uri` 与 `IDAAS_ORIGIN` 不同源（防 SSRF / issuer 混淆） | 同源校验用归一后的 `(host, port)` 比较：显式 `:443`、末尾点 FQDN、punycode、IPv6 均接受（语义等价）；跨 host、http、`user:password@` 嵌入均拒绝。确认 `IDAAS_ORIGIN` 指向正确的 IDaaS 实例域名根 |

@@ -162,7 +162,7 @@ documented inline in `env.template`, and validated by `python3 sample.py
 | `USER_POOL_ID` / `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | Auto | Written back by `setup --mode=script`, or copy from the console (`OAUTH_CLIENT_SECRET_FILE`, a 0600 file, also works) |
 | `OAUTH_REDIRECT_URI` | Auto (has default) | Default `http://127.0.0.1:8765/callback` |
 | `WI_NAME` / `OBO_PROVIDER_NAME` | Auto | Written back by `setup --mode=script`, or copy from the console (WI must have session binding enabled) |
-| `ORDER_SERVICE_SCOPES` | No | Comma-separated; default `read,write.all`; must be a **subset of the scopes the target app is authorized for** — exceeding it fails with `Forbidden.ScopeNotGranted` (verified in production) |
+| `ORDER_SERVICE_SCOPES` | No | Comma-separated; default `write:all`; must **match the console-authorized scopes verbatim** and be a subset — exceeding it fails with `Forbidden.ScopeNotGranted` (verified in production). German production console authorizes `read:all` and `write:all` |
 | `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | No | Leave empty → auto-filled at runtime from the `IDAAS_ORIGIN` discovery document, **no manual copying**. If your IDaaS instance uses a custom issuer path, discovery returns the authoritative value |
 | `SETUP_*` | No | Resource names & provider config for `setup --mode=script`; keep defaults — except `SETUP_OBO_PROVIDER_CONFIG`, which must point at the IDaaS order-service application |
 
@@ -241,8 +241,9 @@ values first.
 
 ## 🔧 Resource Setup (control plane — two ways)
 
-The control plane is a one-time setup: user pool → IDaaS binding → pool OAuth
-client → outbound provider → workload identity. Pick **one** of two modes:
+The control plane is a one-time setup: user pool → connect IDaaS + user sync
+→ pool OAuth client → authorize enterprise service (platform auto-creates
+provider) → workload identity + RAM role. Pick **one** of two modes:
 
 ### Option 1 — Console walkthrough (recommended if you want to understand each piece)
 
@@ -251,24 +252,31 @@ then follow **[docs/control-plane-console.md](./docs/control-plane-console.md)**
 — a screenshot-annotated, 6-step walkthrough (masked console screenshots
 bundled under `docs/images/`):
 
-1. Create a user pool → record `USER_POOL_ID` (also grab `SIGNIN_BASE_URL`
-   from the pool detail page).
-2. Bind IDaaS as the identity source; wait for the orchestration phases
-   (binding → SCIM → SSO) to reach Enabled.
+1. Create a user pool (**check “auto-create inbound identity provider”**) →
+   record `USER_POOL_ID`.
+2. “Identity Sources” tab → “Connect IDaaS” (one-click: platform creates the
+   IDaaS instance + inbound app). Then in the IDaaS console create a demo
+   account, enable SSO & user sync, set sync scope (ou_root), execute sync,
+   and verify the account appears in the pool user list.
 3. *(Optional)* Enable SCIM provisioning — the main line does not need it.
 4. Create the pool OAuth client; the redirect-uri whitelist must include a
    loopback entry `http://127.0.0.1:8765/callback` → record
    `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`.
-5. Create the order-service app on the IDaaS side, then the OAuth2 credential
-   provider in Agent Identity (vendor IDaaS, type ON_BEHALF_OF) → record
-   `OBO_PROVIDER_NAME`; take `ORDER_SERVICE_AUDIENCE` from the enterprise app's
-   **own audience identifier** on its detail page (e.g. `test-aud`) — **not** the
-   provider's OutboundAudience (`agent-…` form; passing it fails with
-   `Forbidden.IdaasRsNotAuthorized`).
+5. “Enterprise Services” → “Authorize Enterprise Service”: the platform
+   auto-creates an ON_BEHALF_OF/IDaaS credential provider (quota = 1, name is
+   a platform-generated UUID — no manual creation). Then in IDaaS add an M2M
+   app, set audience `test-aud`, add scopes `read:all` + `write:all` with
+   auto-grant, and back in Agent Identity “Edit Authorization Scope” tick the
+   user pool + both scopes → record `OBO_PROVIDER_NAME` and
+   `ORDER_SERVICE_AUDIENCE` (the M2M app’s own audience, **not** the provider’s
+   OutboundAudience `agent-…` form).
 6. Create the IdentityProvider (discovery = this pool) and the
-   WorkloadIdentity **with session binding enabled** → record `WI_NAME`. The
-   order-service issuer/JWKS are fetched automatically from the `IDAAS_ORIGIN`
-   discovery document — no manual copying needed.
+   WorkloadIdentity **with session binding enabled**; associate the inbound
+   IdP and attach a runtime RAM role via “Quick Authorize”
+   (AgentIdentityData policy — prerequisite for OBO data-plane calls) →
+   record `WI_NAME`. `SIGNIN_BASE_URL` / `ORDER_SERVICE_ISSUER` /
+   `ORDER_SERVICE_JWKS_URI` are auto-derived or fetched via discovery — no
+   manual copying needed (only fill to explicitly override).
 
 ### Option 2 — One-shot script (recommended if you just want it running)
 
@@ -404,14 +412,14 @@ python3 sample.py obo
 
 ```
 [obo] 调用 GetResourceOAuth2Token（OAuth2Flow=ON_BEHALF_OF）…
-      Provider=idaas-obo-sample-provider Audience=<enterprise-app audience, e.g. test-aud> Scopes=["read", "write.all"]
+      Provider=idaas-obo-sample-provider Audience=<enterprise-app audience, e.g. test-aud> Scopes=["write:all"]
       契约：业务参数必须全部放 formData body（Scopes 传 JSON 数组字符串，禁止逐个传参）
 [obo] 成功（RequestId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）：订单服务 AT 已落盘（eyJhbGci…(len=1498)）
 [obo] 订单服务 RT 已落盘（eyJhbGci…(len=743)）；刷新令牌仅作演示，sample 不实现刷新流程
 [obo] AT claims（on-behalf-of 委托语义）：
         iss     = https://<your-eiam-instance>…（令牌由 IDaaS 签发）
         aud     = <enterprise-app audience, e.g. test-aud>（受众=订单服务应用）
-        scope   = read write.all
+        scope   = write:all
         sub     = user_xxxxxxxx…（主体=登录员工）
         act.sub = acs:agentidentity:<region>:<account-id>:workloadidentitydirectory/default/workloadidentity/idaas-obo-sample-wi
                   （实际执行者=工作负载身份 ARN：Agent 以用户名义行事）
@@ -442,9 +450,9 @@ python3 sample.py serve-orders          # --port 9090 by default; Ctrl+C to stop
 [orders] Ctrl+C 停止。demo 命令会在后台自动起停本服务。
 ```
 
-Routes: `GET /health` (no auth) · `GET /orders` (Bearer verified; `read.all`
-scope → all orders, otherwise only the caller’s own) · `POST /orders`
-(`write.all` required, else 403).
+Routes: `GET /health` (no auth) · `GET /orders` (Bearer verified; `read:all`
+scope → all orders, otherwise only the caller's own) · `POST /orders`
+(`write:all` required, else 403).
 
 > **Fail-closed startup**: `serve-orders` refuses to start if
 > `ORDER_SERVICE_ISSUER`, `ORDER_SERVICE_JWKS_URI`, or
@@ -475,9 +483,9 @@ redirect-uri whitelist ignores loopback ports, so no console change is needed:
 [demo] 第 4 步：用订单服务 AT 调用本地模拟服务
 [demo GET /orders] HTTP 200 →
         scope_view=own sub=user_xxxxxxxx… 订单数=0
-        （当前 scope 无 read.all → 只能看到本人订单；把你的 sub 配置到
+        （当前 scope 无 read:all → 只能看到本人订单；把你的 sub 配置到
           orders/mock_data.py 的 SUB_ALIAS / ORDERS_BY_SUB 即可看到数据）
-[demo POST /orders (write.all)] HTTP 201 →
+[demo POST /orders (write:all)] HTTP 201 →
         scope_view=- sub=- 订单数=-
 [demo] 全链路完成：入站联邦登录 → WAT 身份升维 → OBO 出站 → 订单服务按身份返回差异化数据。
 [demo] 换一个用户（或无痕窗口换账号）重跑 demo，可见 /orders 返回不同数据。
@@ -515,11 +523,11 @@ The demo (or the four steps) succeeded when all of the following hold:
 
 1. **`demo` printed the final summary line** — inbound federated login → WAT
    identity lift → OBO outbound → identity-differentiated order data.
-2. **`GET /orders` responds 200 and is differentiated**: with `read.all` you
+2. **`GET /orders` responds 200 and is differentiated**: with `read:all` you
    see all orders (`scope_view=all`); without it only your own
    (`scope_view=own`); a fresh/unknown sub yields `count=0` by design.
    Re-running with a **different account** returns different data.
-3. **`POST /orders` returns 201 with `write.all`**, and `403
+3. **`POST /orders` returns 201 with `write:all`**, and `403
    insufficient_scope` without it.
 4. **`obo` printed `act.sub` = the Workload Identity ARN** (the agent acting
    on behalf of the employee) and `sub` = the federated employee.

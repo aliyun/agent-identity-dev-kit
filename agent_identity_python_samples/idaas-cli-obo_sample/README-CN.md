@@ -138,7 +138,7 @@ chmod 600 .env
 | `USER_POOL_ID` / `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | 自动 | 由 `setup --mode=script` 回写，或控制台抄录（也可用 `OAUTH_CLIENT_SECRET_FILE` 指向 0600 文件） |
 | `OAUTH_REDIRECT_URI` | 自动（有默认值） | 默认 `http://127.0.0.1:8765/callback` |
 | `WI_NAME` / `OBO_PROVIDER_NAME` | 自动 | 由 `setup --mode=script` 回写，或控制台抄录（WI 须开启会话绑定） |
-| `ORDER_SERVICE_SCOPES` | 否 | 逗号分隔，默认 `read,write.all`；必须是目标应用**已授权 scope 的子集**——超出报 `Forbidden.ScopeNotGranted`（正式环境实测） |
+| `ORDER_SERVICE_SCOPES` | 否 | 逗号分隔，默认 `write:all`；必须与控制台授权 scope **逐字一致**且为其子集——超出报 `Forbidden.ScopeNotGranted`（正式环境实测）。德国实测控制台授权为 `read:all` 与 `write:all` |
 | `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` | 否 | 留空→运行时由 `IDAAS_ORIGIN` discovery 文档自动填充，**无需手工抄**；若 IDaaS 实例自定义了 issuer 路径，discovery 会取到权威值 |
 | `SETUP_*` | 否 | `setup --mode=script` 的资源命名与 provider 配置；维持默认——除 `SETUP_OBO_PROVIDER_CONFIG` 需指向 IDaaS 侧订单服务应用 |
 
@@ -199,7 +199,7 @@ Level 3 的陈旧过期状态不计入——三级链是短路语义，不可达
 
 ## 🔧 Resource Setup（管控面资源配置——两种方式二选一）
 
-管控面是一次性配置：建用户池 → 绑 IDaaS → 池 OAuth 客户端 → 出站 provider → 工作负载身份。两种模式任选其一：
+管控面是一次性配置：建用户池 → 接入 IDaaS + 用户同步 → 池 OAuth 客户端 → 授权企业服务（平台自动创建 provider）→ 工作负载身份 + RAM 角色。两种模式任选其一：
 
 ### 方式一：控制台点选（推荐给想理解原理的用户）
 
@@ -207,18 +207,24 @@ Level 3 的陈旧过期状态不计入——三级链是短路语义，不可达
 **[docs/control-plane-console.md](./docs/control-plane-console.md)** 操作——
 带打码截图的 6 大步手把手引导（打码截图已入库 `docs/images/`）：
 
-1. 创建用户池 → 记录 `USER_POOL_ID`（同时在用户池详情页取 `SIGNIN_BASE_URL`）。
-2. 绑定 IDaaS 身份源，等待编排相位（绑定 → SCIM → SSO）达到已启用。
+1. 创建用户池（**勾选「自动创建入站身份提供商」**）→ 记录 `USER_POOL_ID`。
+2. 用户池详情 →「身份源」页签 →「接入 IDaaS」（平台一键创建 IDaaS 实例与入站应用）。
+   随后在 IDaaS 控制台建演示账户、开启 SSO 与用户同步、设置同步范围（ou_root）、
+   执行同步，验证池用户列表出现该账户。
 3. （可选）开启 SCIM provisioning——主线不需要。
 4. 创建池 OAuth 客户端；redirect_uri 白名单必须包含 loopback 条目
    `http://127.0.0.1:8765/callback` → 记录 `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`。
-5. 先在 IDaaS 侧创建订单服务企业应用，再在 Agent Identity 侧创建 OAuth2
-   凭证提供商（厂商 IDaaS、类型 ON_BEHALF_OF）→ 记录 `OBO_PROVIDER_NAME`；
-   `ORDER_SERVICE_AUDIENCE` 取该企业服务应用**自身的 audience 标识**（应用
-   详情页，如 `test-aud`），**不是** provider 的 OutboundAudience（`agent-…`
-   形态，误传报 `Forbidden.IdaasRsNotAuthorized`）。
-6. 创建 IdentityProvider（discovery 指向本池）与 WorkloadIdentity（**务必开启会话绑定**）
-   → 记录 `WI_NAME`。订单服务的 issuer/JWKS 由 `IDAAS_ORIGIN` 自动拉 discovery 文档填充——无需手工抄录。
+5. 「企业服务」→「授权企业服务」：平台自动创建 ON_BEHALF_OF/IDaaS 凭证提供商
+   （配额 1，名称为平台自动生成 UUID，无需手建）。随后在 IDaaS 添加 M2M
+   应用、填受众 `test-aud`、增 `read:all` + `write:all` 并选自动授权，回
+   Agent Identity「编辑授权范围」勾选用户池+双 Scope 提交 → 记录
+   `OBO_PROVIDER_NAME` 与 `ORDER_SERVICE_AUDIENCE`（M2M 应用的受众标识，
+   **不是** provider 的 OutboundAudience `agent-…` 形态）。
+6. 创建 IdentityProvider（discovery 指向本池）与 WorkloadIdentity（**务必开启会话绑定**）；
+   关联入站 IdP、关联运行时 RAM 角色并「快速授权」挂 AgentIdentityData 类策略
+   （OBO 数据面权限前提）→ 记录 `WI_NAME`。`SIGNIN_BASE_URL` /
+   `ORDER_SERVICE_ISSUER` / `ORDER_SERVICE_JWKS_URI` 由样例自动派生或
+   discovery 拉取，无需手工抄录（仅显式覆盖时才填）。
 
 ### 方式二：脚本一键（推荐给想快速跑通的用户）
 
@@ -336,14 +342,14 @@ python3 sample.py obo
 
 ```
 [obo] 调用 GetResourceOAuth2Token（OAuth2Flow=ON_BEHALF_OF）…
-      Provider=idaas-obo-sample-provider Audience=<企业服务应用 audience，如 test-aud> Scopes=["read", "write.all"]
+      Provider=idaas-obo-sample-provider Audience=<企业服务应用 audience，如 test-aud> Scopes=["write:all"]
       契约：业务参数必须全部放 formData body（Scopes 传 JSON 数组字符串，禁止逐个传参）
 [obo] 成功（RequestId=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）：订单服务 AT 已落盘（eyJhbGci…(len=1498)）
 [obo] 订单服务 RT 已落盘（eyJhbGci…(len=743)）；刷新令牌仅作演示，sample 不实现刷新流程
 [obo] AT claims（on-behalf-of 委托语义）：
         iss     = https://<your-eiam-instance>…（令牌由 IDaaS 签发）
         aud     = <企业服务应用 audience，如 test-aud>（受众=订单服务应用）
-        scope   = read write.all
+        scope   = write:all
         sub     = user_xxxxxxxx…（主体=登录员工）
         act.sub = acs:agentidentity:<region>:<account-id>:workloadidentitydirectory/default/workloadidentity/idaas-obo-sample-wi
                   （实际执行者=工作负载身份 ARN：Agent 以用户名义行事）
@@ -373,8 +379,8 @@ python3 sample.py serve-orders          # 默认端口 9090；Ctrl+C 停止
 ```
 
 路由：`GET /health`（免鉴权探活）· `GET /orders`（Bearer 验签通过后：scope
-含 `read.all` 返回全部订单，否则只返回本人订单）· `POST /orders`（需要
-`write.all`，否则 403）。
+含 `read:all` 返回全部订单，否则只返回本人订单）· `POST /orders`（需要
+`write:all`，否则 403）。
 
 > **Fail-closed 启动保护**：`serve-orders` 在 `ORDER_SERVICE_ISSUER`、
 > `ORDER_SERVICE_JWKS_URI` 或 `ORDER_SERVICE_AUDIENCE` 为空/占位时
@@ -403,9 +409,9 @@ redirect_uri 白名单忽略 loopback 端口差异，无需改控制台配置：
 [demo] 第 4 步：用订单服务 AT 调用本地模拟服务
 [demo GET /orders] HTTP 200 →
         scope_view=own sub=user_xxxxxxxx… 订单数=0
-        （当前 scope 无 read.all → 只能看到本人订单；把你的 sub 配置到
+        （当前 scope 无 read:all → 只能看到本人订单；把你的 sub 配置到
           orders/mock_data.py 的 SUB_ALIAS / ORDERS_BY_SUB 即可看到数据）
-[demo POST /orders (write.all)] HTTP 201 →
+[demo POST /orders (write:all)] HTTP 201 →
         scope_view=- sub=- 订单数=-
 [demo] 全链路完成：入站联邦登录 → WAT 身份升维 → OBO 出站 → 订单服务按身份返回差异化数据。
 [demo] 换一个用户（或无痕窗口换账号）重跑 demo，可见 /orders 返回不同数据。
@@ -442,10 +448,10 @@ demo（或四步走）成功的标志，全部满足即通过：
 
 1. **demo 打出最终总结行**——入站联邦登录 → WAT 身份升维 → OBO 出站 →
    订单服务按身份返回差异化数据。
-2. **`GET /orders` 返回 200 且数据差异化**：scope 含 `read.all` 时看到全部
+2. **`GET /orders` 返回 200 且数据差异化**：scope 含 `read:all` 时看到全部
    订单（`scope_view=all`）；不含时只看到本人订单（`scope_view=own`）；全新
    sub 返回 `count=0` 属预期。换一个账号重跑，返回的数据不同。
-3. **`POST /orders` 带 `write.all` 返回 201**，缺 `write.all` 返回 403
+3. **`POST /orders` 带 `write:all` 返回 201**，缺 `write:all` 返回 403
    `insufficient_scope`。
 4. **`obo` 打印的 `act.sub` = 工作负载身份 ARN**（Agent 以用户名义行事），
    `sub` = 联邦登录的员工。
