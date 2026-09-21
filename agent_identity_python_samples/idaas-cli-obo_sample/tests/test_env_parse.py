@@ -468,7 +468,7 @@ class TestEnvTemplateConsistency(unittest.TestCase):
             "ALIYUN_SECURITY_TOKEN": "",
             "OAUTH_CLIENT_SECRET_FILE": "",
             "OAUTH_REDIRECT_URI": "http://127.0.0.1:8765/callback",
-            "ORDER_SERVICE_SCOPES": "read,write.all",
+            "ORDER_SERVICE_SCOPES": "write:all",
             "SETUP_POOL_NAME": "idaas-obo-sample-pool",
             "SETUP_CLIENT_NAME": "idaas-obo-sample-cli",
             "SETUP_IDP_NAME": "idaas-obo-sample-idp",
@@ -562,7 +562,7 @@ class TestDeriveDefaults(unittest.TestCase):
 
     def test_defaults_filled(self):
         env = env_mod.derive_defaults({})
-        self.assertEqual(env["ORDER_SERVICE_SCOPES"], "read,write.all")
+        self.assertEqual(env["ORDER_SERVICE_SCOPES"], "write:all")
         self.assertEqual(env["OAUTH_REDIRECT_URI"], "http://127.0.0.1:8765/callback")
         self.assertEqual(env["SETUP_POOL_NAME"], "idaas-obo-sample-pool")
 

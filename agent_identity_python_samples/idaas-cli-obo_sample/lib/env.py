@@ -202,7 +202,7 @@ ENV_SCHEMA = {
     "ORDER_SERVICE_SCOPES": (
         False,
         "订单服务",
-        "申请的 scope，逗号分隔，默认 read,write.all。",
+        "申请的 scope，逗号分隔，默认 write:all。必须与控制台授权 scope 逐字一致。",
     ),
     "ORDER_SERVICE_ISSUER": (
         False,
@@ -449,7 +449,7 @@ def derive_defaults(env: Dict[str, str]) -> Dict[str, str]:
 
     # 2. 固定默认值
     if not merged.get("ORDER_SERVICE_SCOPES"):
-        merged["ORDER_SERVICE_SCOPES"] = "read,write.all"
+        merged["ORDER_SERVICE_SCOPES"] = "write:all"
     if not merged.get("OAUTH_REDIRECT_URI"):
         merged["OAUTH_REDIRECT_URI"] = "http://127.0.0.1:8765/callback"
     if not merged.get("SETUP_POOL_NAME"):

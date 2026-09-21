@@ -2,9 +2,9 @@
 
 路由：
 - ``GET /health``  无需鉴权，返回服务信息（探活用）；
-- ``GET /orders``  Bearer 验签通过后：scope 含 ``read.all`` → 全量订单；
+- ``GET /orders``  Bearer 验签通过后：scope 含 ``read:all`` → 全量订单；
                    否则按 ``sub`` 只返回本人订单；
-- ``POST /orders`` scope 含 ``write.all`` → 受理新订单；否则 403。
+- ``POST /orders`` scope 含 ``write:all`` → 受理新订单；否则 403。
 
 安全约定：
 - 401/403 响应体只含 ``{"error", "error_description"}``，绝不回显令牌本体；
@@ -96,7 +96,7 @@ def authenticate(
 
 
 def handle_get_orders(claims: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-    """GET /orders 业务逻辑：read.all → 全量；否则按 sub 过滤本人订单。"""
+    """GET /orders 业务逻辑：read:all → 全量；否则按 sub 过滤本人订单。"""
     sub = claims.get("sub")
     if not sub:
         return 401, {
@@ -104,7 +104,7 @@ def handle_get_orders(claims: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
             "error_description": "令牌缺少 sub claim，无法识别用户身份",
         }
     scopes = scopes_from_claims(claims)
-    if "read.all" in scopes:
+    if "read:all" in scopes:
         return 200, {
             "scope_view": "all",
             "sub": sub,
@@ -121,7 +121,7 @@ def handle_get_orders(claims: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
 
 
 def handle_post_orders(claims: Dict[str, Any], body: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
-    """POST /orders 业务逻辑：write.all → 受理；否则 403。"""
+    """POST /orders 业务逻辑：write:all → 受理；否则 403。"""
     sub = claims.get("sub")
     if not sub:
         return 401, {
@@ -129,10 +129,10 @@ def handle_post_orders(claims: Dict[str, Any], body: Dict[str, Any]) -> Tuple[in
             "error_description": "令牌缺少 sub claim，无法识别用户身份",
         }
     scopes = scopes_from_claims(claims)
-    if "write.all" not in scopes:
+    if "write:all" not in scopes:
         return 403, {
             "error": "insufficient_scope",
-            "error_description": "需要 write.all 权限（当前 scope：{}）".format(
+            "error_description": "需要 write:all 权限（当前 scope：{}）".format(
                 " ".join(scopes) or "<空>"
             ),
         }

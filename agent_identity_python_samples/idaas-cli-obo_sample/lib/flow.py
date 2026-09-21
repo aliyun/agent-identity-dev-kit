@@ -522,7 +522,7 @@ def run_obo(config: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     except tokens_mod.TokenExpiredError as exc:
         raise FlowError(str(exc)) from None
 
-    scopes_json = serialize_scopes(config.get("ORDER_SERVICE_SCOPES", "read,write.all"))
+    scopes_json = serialize_scopes(config.get("ORDER_SERVICE_SCOPES", "write:all"))
     print("[obo] 调用 GetResourceOAuth2Token（OAuth2Flow=ON_BEHALF_OF）…")
     print("      Provider={} Audience={} Scopes={}".format(
         config["OBO_PROVIDER_NAME"], config["ORDER_SERVICE_AUDIENCE"], scopes_json

@@ -1,8 +1,8 @@
 """订单服务 scope/身份差异化测试：ephemeral port 起真实 HTTP 服务（零外网依赖）。
 
 用测试内生成的 RSA 密钥签发令牌（fetch_func 注入 JWKS，不联网），覆盖：
-- read.all → 全量订单 / 无 read.all → 按 sub 过滤本人订单；
-- write.all → POST 受理 / 无 write.all → 403 insufficient_scope；
+- read:all → 全量订单 / 无 read:all → 按 sub 过滤本人订单；
+- write:all → POST 受理 / 无 write:all → 403 insufficient_scope；
 - 401 各分支（无 Authorization / 坏格式 / 篡改签名 / 过期令牌）且响应体不回显令牌；
 - JWKS 源故障 → 503。
 """
@@ -74,7 +74,7 @@ class OrdersServerTestCase(unittest.TestCase):
 
     # ---- 工具 ----
 
-    def token(self, sub="employee-alice", scope="read write.all", exp=None, aud=AUDIENCE):
+    def token(self, sub="employee-alice", scope="write:all", exp=None, aud=AUDIENCE):
         claims = {
             "iss": ISSUER,
             "aud": aud,
@@ -116,7 +116,7 @@ class TestHealthRoute(OrdersServerTestCase):
 
 class TestGetOrdersScope(OrdersServerTestCase):
     def test_read_all_returns_everyones_orders(self):
-        status, payload = self.request("/orders", token=self.token(scope="read read.all write.all"))
+        status, payload = self.request("/orders", token=self.token(scope="read:all write:all"))
         self.assertEqual(status, 200)
         self.assertEqual(payload["scope_view"], "all")
         self.assertEqual(payload["count"], len(mock_data.all_orders()))
@@ -126,7 +126,7 @@ class TestGetOrdersScope(OrdersServerTestCase):
         self.assertIn("admin", owner_subs)
 
     def test_no_read_all_filters_own_orders(self):
-        status, payload = self.request("/orders", token=self.token(sub="employee-alice", scope="read write.all"))
+        status, payload = self.request("/orders", token=self.token(sub="employee-alice", scope="write:all"))
         self.assertEqual(status, 200)
         self.assertEqual(payload["scope_view"], "own")
         self.assertEqual(payload["count"], 2)
@@ -165,7 +165,7 @@ class TestPostOrdersScope(OrdersServerTestCase):
         status, payload = self.request(
             "/orders",
             method="POST",
-            token=self.token(sub="employee-alice", scope="read write.all"),
+            token=self.token(sub="employee-alice", scope="write:all"),
             body={"title": "测试下单", "amount": 88.5},
         )
         self.assertEqual(status, 201)
@@ -181,18 +181,18 @@ class TestPostOrdersScope(OrdersServerTestCase):
         status, payload = self.request(
             "/orders",
             method="POST",
-            token=self.token(sub="employee-alice", scope="read read.all"),
+            token=self.token(sub="employee-alice", scope="read:all"),
             body={"title": "越权下单", "amount": 1},
         )
         self.assertEqual(status, 403)
         self.assertEqual(payload["error"], "insufficient_scope")
-        self.assertIn("write.all", payload["error_description"])
+        self.assertIn("write:all", payload["error_description"])
 
     def test_missing_title_gets_400(self):
         status, payload = self.request(
             "/orders",
             method="POST",
-            token=self.token(scope="read write.all"),
+            token=self.token(scope="write:all"),
             body={"amount": 1},
         )
         self.assertEqual(status, 400)
@@ -320,7 +320,7 @@ class TestRequestBodyHandling(OrdersServerTestCase):
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=10)
         try:
             conn.putrequest("POST", "/orders")
-            conn.putheader("Authorization", "Bearer {}".format(self.token(scope="read write.all")))
+            conn.putheader("Authorization", "Bearer {}".format(self.token(scope="write:all")))
             conn.putheader("Content-Type", "application/json")
             conn.putheader("Content-Length", content_length)
             conn.endheaders()  # 不发送 body：两种分支服务端均不依赖实际 body

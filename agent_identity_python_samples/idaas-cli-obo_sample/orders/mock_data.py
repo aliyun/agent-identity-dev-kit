@@ -2,9 +2,9 @@
 
 数据规则（模拟一个真实企业内部订单系统的最小形态）：
 - ``sub`` 是用户唯一标识：OBO AT 里的 sub 来自联邦登录的池用户；
-- ``scope`` 含 ``read.all`` → 返回全部订单（管理员视角）；
+- ``scope`` 含 ``read:all`` → 返回全部订单（管理员视角）；
   否则只返回 ``sub`` 本人名下订单（普通员工视角）；
-- ``scope`` 含 ``write.all`` → 允许 POST 创建新订单。
+- ``scope`` 含 ``write:all`` → 允许 POST 创建新订单。
 
 如何体验差异化数据：
 - 读者登录后拿到的真实 sub 与下方示意 sub 不同，属于「未知用户」→ 本人订单为空，
@@ -69,7 +69,7 @@ def orders_for_sub(sub: str) -> List[Dict[str, Any]]:
 
 
 def all_orders() -> List[Dict[str, Any]]:
-    """全部订单（read.all 权限视角），按 order_id 稳定排序。"""
+    """全部订单（read:all 权限视角），按 order_id 稳定排序。"""
     merged: List[Dict[str, Any]] = []
     for orders in ORDERS_BY_SUB.values():
         merged.extend(orders)
@@ -78,7 +78,7 @@ def all_orders() -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# POST /orders 创建订单（write.all）
+# POST /orders 创建订单（write:all）
 # ---------------------------------------------------------------------------
 
 _next_order_seq = [3000]

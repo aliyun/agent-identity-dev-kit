@@ -235,7 +235,7 @@ class TestTokenVerifierBranches(unittest.TestCase):
             "iss": self.ISSUER,
             "aud": self.AUDIENCE,
             "sub": "user_xxxxxxxx0001",
-            "scope": "read write.all",
+            "scope": "write:all",
             "exp": now + 600,
             "iat": now,
         }
@@ -388,10 +388,10 @@ class TestJwksCrossOriginWarning(unittest.TestCase):
 
 class TestScopeParsing(unittest.TestCase):
     def test_string_scope(self):
-        self.assertEqual(scopes_from_claims({"scope": "read write.all"}), ["read", "write.all"])
+        self.assertEqual(scopes_from_claims({"scope": "read:all write:all"}), ["read:all", "write:all"])
 
     def test_list_scope(self):
-        self.assertEqual(scopes_from_claims({"scope": ["read", "write.all"]}), ["read", "write.all"])
+        self.assertEqual(scopes_from_claims({"scope": ["read:all", "write:all"]}), ["read:all", "write:all"])
 
     def test_missing_scope(self):
         self.assertEqual(scopes_from_claims({}), [])

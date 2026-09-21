@@ -380,17 +380,17 @@ def run_demo(login_port: Optional[int] = None) -> int:
         status, payload = _http_json("{}/orders".format(orders_base), bearer=at)
         _print_orders_payload("demo GET /orders", status, payload)
         if isinstance(payload, dict) and payload.get("scope_view") == "own":
-            print("        （当前 scope 无 read.all → 只能看到本人订单；把你的 sub 配置到")
+            print("        （当前 scope 无 read:all → 只能看到本人订单；把你的 sub 配置到")
             print("          orders/mock_data.py 的 SUB_ALIAS / ORDERS_BY_SUB 即可看到数据）")
 
-        # --- POST /orders：演示 write.all ---
+        # --- POST /orders：演示 write:all ---
         status, payload = _http_json(
             "{}/orders".format(orders_base),
             method="POST",
             bearer=at,
             body={"title": "demo 代下单：企业软件订阅 1 年", "amount": 1999.00},
         )
-        _print_orders_payload("demo POST /orders (write.all)", status, payload)
+        _print_orders_payload("demo POST /orders (write:all)", status, payload)
 
         # --- 收尾指引 ---
         print()

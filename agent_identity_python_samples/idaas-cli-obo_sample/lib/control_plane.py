@@ -206,10 +206,11 @@ docs/control-plane-console.md，含每步的入口路径与 CLI 等价命令）�
    → 记录 USER_POOL_ID（up_ 前缀）
    （CLI 等价：aliyun agentidentity create-user-pool --user-pool-name <名称>）
 
-2. 绑定 IDaaS（身份源联邦）
-   用户池设置 → 身份源 → IDaaS，填 IDaaS 侧应用的 clientId/私钥，
-   等待编排相位完成（绑定 → SCIM 配置 → SSO 配置，状态为已启用）。
-   → 无需抄录（SSOStatus=Enabled 即可）
+2. 接入 IDaaS（身份源联邦）
+   用户池详情 →「身份源」页签 →「接入 IDaaS」，平台一键创建 IDaaS 实例与入站应用。
+   创建完成后在 IDaaS 控制台建演示账户（如 testuser），开启 SSO 与用户同步、
+   设置同步范围（阿里云 IDaaS/ou_root）、执行同步，验证池用户列表出现该账户。
+   → 无需抄录（SSOStatus=Enabled 且用户同步成功即可）
    （CLI 等价：aliyun agentidentity set-specific-identity-provider /
     get-specific-identity-provider —— 注意 CLI 帮助标注当前仅支持 DingTalk，
     IDaaS 绑定以控制台操作为准）
@@ -226,22 +227,27 @@ docs/control-plane-console.md，含每步的入口路径与 CLI 等价命令）�
     http://127.0.0.1:8765/callback --enforce-pkce true --secret-required true；
     密钥用 create-client-secret）
 
-5. 注册出站资源（订单服务应用）
-   先在 IDaaS 侧创建企业服务应用（模拟订单服务），再回到 Agent Identity 控制台
-   创建 OAuth2 凭证提供商（厂商选 IDaaS、类型 ON_BEHALF_OF，配置指向该应用）。
-   → 记录 OBO_PROVIDER_NAME 与 ORDER_SERVICE_AUDIENCE（取 IDaaS 控制台该企业
-     服务应用详情页的 audience 标识，如 test-aud；不是 provider 的
-     OutboundAudience agent-… 形态，误传报 Forbidden.IdaasRsNotAuthorized）
-   （CLI 等价：aliyun agentidentity create-oauth2-credential-provider，配额=1）
+5. 授权企业服务（平台自动创建 OBO 凭证提供商）
+   控制台「企业服务」页 → 点「授权企业服务」，平台自动创建 ON_BEHALF_OF/IDaaS
+   凭证提供商（每账号配额 1，名称为平台自动生成 UUID 形态，无需手建）。
+   随后在 IDaaS 控制台添加 M2M 应用 →「功能权限开放」填受众 test-aud、
+   Scopes 增 read:all 与 write:all 并选自动授权 → 回控制台「编辑授权范围」
+   勾选用户池 + 双 Scope 提交。
+   provider 与 M2M 密钥均平台托管，客户无需配置。
+   → 记录 OBO_PROVIDER_NAME（控制台企业服务详情页可见）与
+     ORDER_SERVICE_AUDIENCE（IDaaS M2M 应用功能权限开放页的受众标识，如 test-aud；
+     不是 provider 的 OutboundAudience agent-… 形态）
+   （CLI 等价：无——授权企业服务仅控制台操作）
 
-6. 创建工作负载身份（OBO 委托主体）并记录令牌验签源
+6. 创建工作负载身份（OBO 委托主体）
    创建 IdentityProvider（discovery 指向本池）与 WorkloadIdentity
    （务必开启 SessionBindingEnabled，否则 OBO 报 InboundCredentialMissing）。
+   关联入站 IdP、关联运行时 RAM 角色并「快速授权」挂 AgentIdentityData 类策略
+   （OBO 数据面权限前提）。
    → 记录 WI_NAME；
-   → 记录 SIGNIN_BASE_URL（用户池详情页登录地址，形态 https://signin.<region>…）；
-   → 记录 ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI：
-     GET {IDAAS_ORIGIN}/api/v2/iauths_system/oauth2/.well-known/openid-configuration
-     返回 JSON 的 issuer / jwks_uri 字段（公网可达）。
+   → SIGNIN_BASE_URL / ORDER_SERVICE_ISSUER / ORDER_SERVICE_JWKS_URI
+     由样例自动派生或运行时经 discovery 拉取，无需手工抄录；
+     仅显式覆盖时才取。
    （CLI 等价：aliyun agentidentity create-identity-provider /
     create-workload-identity --session-binding-enabled true）
 
@@ -338,8 +344,8 @@ def _bind_idp_and_wait(config: Dict[str, str], pool_name: str, logger, resolver:
         cause = exc.__cause__
         if isinstance(cause, rpc.RpcError) and cause.code.startswith("InvalidParameter"):
             _log("[FALLBACK] SetSpecificIdentityProvider 被拒（{}）：".format(cause))
-            _log("        入站 IDaaS 绑定请改用控制台完成（模式 A 第 2 步：用户池设置 →")
-            _log("        身份源 → IDaaS，填 IDaaS 侧应用 clientId/私钥）；绑定完成后重跑")
+            _log("        入站 IDaaS 绑定请改用控制台完成（模式 A 第 2 步：用户池详情 →")
+            _log("        身份源 → 接入 IDaaS，一键创建实例与入站应用）；绑定完成后重跑")
             _log("        setup --mode=script（幂等）即可。继续创建后续资源 …")
             return
         raise
